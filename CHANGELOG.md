@@ -1,3 +1,32 @@
+## [v2.87.1](https://github.com/docling-project/docling-core/releases/tag/v2.87.1) - 2026-07-15
+
+### Fix
+
+* **doclang:** Enforce image size budgets for archive assets and ImageRef ([#684](https://github.com/docling-project/docling-core/issues/684)) ([`224eeea`](https://github.com/docling-project/docling-core/commit/224eeeab60ca7da9a8febb13e20f3e0f2b70635d))
+* **doclang:** Add deserialize size, depth, and element budgets ([#683](https://github.com/docling-project/docling-core/issues/683)) ([`aee0674`](https://github.com/docling-project/docling-core/commit/aee0674a2891ab737cea32c9d412c9d7dd22ee4a))
+* **chunker:** Preserve table structure across chunks in markdown ([#678](https://github.com/docling-project/docling-core/issues/678)) ([`7775df1`](https://github.com/docling-project/docling-core/commit/7775df117647f2cd5050021791d4cbc7998e39bb))
+
+## [v2.87.0](https://github.com/docling-project/docling-core/releases/tag/v2.87.0) - 2026-07-11
+
+### Feature
+
+* Split the monolithic `document.py` into focused modules ([#664](https://github.com/docling-project/docling-core/issues/664)) ([`f8a36e9`](https://github.com/docling-project/docling-core/commit/f8a36e9a106e66ce8efab3d0e51fe9dc82525f9e))
+
+### Fix
+
+* **doclang:** Enforce size limits when extracting .dclx archives ([#682](https://github.com/docling-project/docling-core/issues/682)) ([`994881b`](https://github.com/docling-project/docling-core/commit/994881b8d43b91392faed4e296260ef8e5599cbc))
+* **deps:** Constrain numpy <2.5.0 and add doclang schematron-saxon to dev ([#669](https://github.com/docling-project/docling-core/issues/669)) ([`e71da6b`](https://github.com/docling-project/docling-core/commit/e71da6bf05b7a6564d0f3b5923f991665c64cbb1))
+
+### Documentation
+
+* Fix typos in docstrings and comments ([#677](https://github.com/docling-project/docling-core/issues/677)) ([`500a6e7`](https://github.com/docling-project/docling-core/commit/500a6e7d12e83f01fc278a359bb9e0cec0cd7161))
+
+## [v2.86.0](https://github.com/docling-project/docling-core/releases/tag/v2.86.0) - 2026-07-03
+
+### Feature
+
+* Add fsspec support ([#444](https://github.com/docling-project/docling-core/issues/444)) ([`be42fce`](https://github.com/docling-project/docling-core/commit/be42fcea2e664cac6c029a5917c6caebf064b91b))
+
 ## [v2.85.0](https://github.com/docling-project/docling-core/releases/tag/v2.85.0) - 2026-06-25
 
 ### Feature
