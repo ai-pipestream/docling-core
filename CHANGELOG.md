@@ -1,3 +1,44 @@
+## [v2.91.0](https://github.com/docling-project/docling-core/releases/tag/v2.91.0) - 2026-08-06
+
+### Feature
+
+* Update the add_<...> items with source uniformly ([#711](https://github.com/docling-project/docling-core/issues/711)) ([`f39885b`](https://github.com/docling-project/docling-core/commit/f39885b8c53546eefeb50a8c09fcd30cf9c734d2))
+
+## [v2.90.0](https://github.com/docling-project/docling-core/releases/tag/v2.90.0) - 2026-08-03
+
+### Feature
+
+* Accept EBCDIC MIME types in DocumentOrigin ([#707](https://github.com/docling-project/docling-core/issues/707)) ([`d93e83f`](https://github.com/docling-project/docling-core/commit/d93e83f7f125ac059ecde498e66861c84a0414c0))
+
+## [v2.89.0](https://github.com/docling-project/docling-core/releases/tag/v2.89.0) - 2026-07-31
+
+### Feature
+
+* `dclq` tool ([#696](https://github.com/docling-project/docling-core/issues/696)) ([`cf2ac70`](https://github.com/docling-project/docling-core/commit/cf2ac706323f3c467e91f1f55bc77dbe205808e0))
+
+### Fix
+
+* Relax typer upper bound to <0.27.0 ([#697](https://github.com/docling-project/docling-core/issues/697)) ([`6b8d35f`](https://github.com/docling-project/docling-core/commit/6b8d35ff28395155fb68ac1e03e66c4e0097ee31))
+* Preserve literal tag-shaped text in OTSL cells ([#695](https://github.com/docling-project/docling-core/issues/695)) ([`4afc5e6`](https://github.com/docling-project/docling-core/commit/4afc5e67893f8ded99614845612352849adb0b79))
+
+## [v2.88.0](https://github.com/docling-project/docling-core/releases/tag/v2.88.0) - 2026-07-27
+
+### Feature
+
+* Add enable_chart_tables and traverse_pictures to save_as_markdown ([#662](https://github.com/docling-project/docling-core/issues/662)) ([`fb9ffbd`](https://github.com/docling-project/docling-core/commit/fb9ffbd4370e94e7030b3e0826deef1c62c3d27a))
+
+### Fix
+
+* **doclang:** Clamp deep section headers instead of raising ([#688](https://github.com/docling-project/docling-core/issues/688)) ([`b869c67`](https://github.com/docling-project/docling-core/commit/b869c67cf82790453acc9428963d55eb0c9a0280))
+* **doclang:** Sanitize XML-illegal text characters ([#687](https://github.com/docling-project/docling-core/issues/687)) ([`26a50ab`](https://github.com/docling-project/docling-core/commit/26a50ab1402e96c9cdeca8093b3c104b6c15087b))
+* DocLang deserialization of XML-sensitive OTSL cell content ([#689](https://github.com/docling-project/docling-core/issues/689)) ([`129811f`](https://github.com/docling-project/docling-core/commit/129811fe4959969e4cc91b958c7fc9ba884d288f))
+* Accept application/epub+zip mimetype in DocumentOrigin ([#692](https://github.com/docling-project/docling-core/issues/692)) ([`b7a4298`](https://github.com/docling-project/docling-core/commit/b7a4298b4fe2470a97b2b3383d4e9e373e1727b0))
+* Lazy load transformers in HybridChunker ([#468](https://github.com/docling-project/docling-core/issues/468)) ([`9ceb266`](https://github.com/docling-project/docling-core/commit/9ceb26665fabf07134c25ceef656bbbe0b7b54c5))
+
+### Documentation
+
+* **page:** Add Field descriptions to page primitives ([#681](https://github.com/docling-project/docling-core/issues/681)) ([`2718ade`](https://github.com/docling-project/docling-core/commit/2718adefc2ef258bfeb34853211f3483a9728558))
+
 ## [v2.87.1](https://github.com/docling-project/docling-core/releases/tag/v2.87.1) - 2026-07-15
 
 ### Fix
