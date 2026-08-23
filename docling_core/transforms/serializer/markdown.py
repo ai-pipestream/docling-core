@@ -43,6 +43,8 @@ from docling_core.types.doc import (
     DocItem,
     DocItemLabel,
     DoclingDocument,
+    FieldItem,
+    FieldRegionItem,
     FloatingItem,
     Formatting,
     FormItem,
@@ -184,10 +186,36 @@ class MarkdownParams(CommonParams):
             )
         ),
     ] = False
+    include_picture_classification: bool = Field(
+        default=True,
+        description="Include the picture classification prediction (the image's predicted class).",
+    )
 
 
 class MarkdownTextSerializer(BaseModel, BaseTextSerializer):
     """Markdown-specific text item serializer."""
+
+    def _md_line_breaks(self, text: str) -> str:
+        """Replace single newlines with GFM hard line breaks (two trailing spaces).
+
+        A single `\\n` becomes `"  \\n"` (two trailing spaces) so Markdown
+        renderers honour the line break.  Double newlines (`\\n\\n`) are left
+        intact because they represent a paragraph break, which is already handled
+        by the document serializer joining parts with `"\\n\\n"`.
+        Override to disable or change this behaviour in subclasses.
+        """
+        paragraphs = text.split("\n\n")
+        processed = [para.replace("\n", "  \n") for para in paragraphs]
+        return "\n\n".join(processed)
+
+    def _heading_line_breaks(self, text: str) -> str:
+        """Replace newlines in heading text with a space.
+
+        GFM headings cannot span multiple lines, so `\\n` is collapsed to a
+        space rather than a hard line break.  Override to change this behaviour
+        in subclasses.
+        """
+        return text.replace("\n", " ")
 
     @override
     def serialize(
@@ -226,6 +254,14 @@ class MarkdownTextSerializer(BaseModel, BaseTextSerializer):
         if isinstance(item, ListItem | TitleItem | SectionHeaderItem):
             if not has_inline_repr:
                 # case where processing/formatting should be applied first (in inner scope)
+                if isinstance(item, TitleItem | SectionHeaderItem):
+                    # Headings cannot span multiple lines; replace newlines with a
+                    # space so "Hello\nWorld" becomes "# Hello World", not "# Hello\nWorld".
+                    text = self._heading_line_breaks(text)
+                elif isinstance(item, ListItem):
+                    # Apply GFM hard line breaks inside list item text before
+                    # post_process wraps it in formatting/hyperlink markers.
+                    text = self._md_line_breaks(text)
                 text = doc_serializer.post_process(
                     text=text,
                     escape_html=escape_html,
@@ -300,7 +336,8 @@ class MarkdownTextSerializer(BaseModel, BaseTextSerializer):
             # although wrapping is not guaranteed if post-processing makes changes
             text_part = textwrap.fill(text, width=params.wrap_width)
         else:
-            text_part = text
+            # Apply GFM hard line breaks: single \n -> "  \n", \n\n preserved.
+            text_part = self._md_line_breaks(text)
 
         if text_part:
             text_res = create_ser_result(text=text_part, span_source=item)
@@ -353,7 +390,14 @@ class MarkdownMetaSerializer(BaseModel, BaseMetaSerializer):
                     if (
                         (params.allowed_meta_names is None or key in params.allowed_meta_names)
                         and (key not in params.blocked_meta_names)
-                        and (tmp := self._serialize_meta_field(item.meta, key, params.mark_meta))
+                        and (
+                            tmp := self._serialize_meta_field(
+                                item.meta,
+                                key,
+                                params.mark_meta,
+                                include_picture_classification=params.include_picture_classification,
+                            )
+                        )
                     )
                 ]
                 if item.meta
@@ -363,7 +407,15 @@ class MarkdownMetaSerializer(BaseModel, BaseMetaSerializer):
             # NOTE for now using an empty span source for GroupItems
         )
 
-    def _serialize_meta_field(self, meta: BaseMeta, name: str, mark_meta: bool) -> Optional[str]:
+    def _serialize_meta_field(
+        self,
+        meta: BaseMeta,
+        name: str,
+        mark_meta: bool,
+        *,
+        include_picture_classification: bool = True,
+        **kwargs: Any,
+    ) -> Optional[str]:
         if (field_val := getattr(meta, name)) is not None:
             if isinstance(field_val, SummaryMetaField):
                 txt = field_val.text
@@ -372,6 +424,8 @@ class MarkdownMetaSerializer(BaseModel, BaseMetaSerializer):
             elif isinstance(field_val, DescriptionMetaField):
                 txt = field_val.text
             elif isinstance(field_val, PictureClassificationMetaField):
+                if not include_picture_classification:
+                    return None
                 txt = self._humanize_text(field_val.get_main_prediction().class_name)
             elif isinstance(field_val, MoleculeMetaField):
                 txt = field_val.smi
@@ -408,6 +462,8 @@ class MarkdownAnnotationSerializer(BaseModel, BaseAnnotationSerializer):
 
         res_parts: list[SerializationResult] = []
         for ann in item.get_annotations():
+            if isinstance(ann, PictureClassificationData) and not params.include_picture_classification:
+                continue
             if isinstance(
                 ann,
                 PictureClassificationData | DescriptionAnnotation | PictureMoleculeData,
@@ -845,6 +901,8 @@ class MarkdownFallbackSerializer(BaseFallbackSerializer):
             parts = doc_serializer.get_parts(item=item, **kwargs)
             text_res = "\n\n".join([p.text for p in parts if p.text])
             return create_ser_result(text=text_res, span_source=parts)
+        elif isinstance(item, (FieldRegionItem, FieldItem)):
+            return create_ser_result()
         else:
             return create_ser_result(
                 text="<!-- missing-text -->",
