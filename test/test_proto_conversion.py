@@ -715,3 +715,43 @@ def test_reverse_empty_vs_absent_lists():
     # field_regions / field_items suppressed when empty.
     assert "field_regions" not in dumped
     assert "field_items" not in dumped
+
+
+def test_reverse_text_arm_dispatches_on_label():
+    """Foreign producers emit all text items through the generic `text` arm,
+    discriminated by label (as in the JSON dialect); the reverse converter
+    must reconstruct the same classes the JSON loading path would produce."""
+    from docling_core.types.doc.document import (
+        ListItem as ListItemModel,
+        SectionHeaderItem as SectionHeaderModel,
+        TitleItem as TitleModel,
+    )
+
+    doc_msg = pb2.DoclingDocument(
+        name="foreign",
+        body=pb2.GroupItem(self_ref="#/body"),
+        furniture=pb2.GroupItem(self_ref="#/furniture"),
+    )
+    for index, label in enumerate(
+        (
+            pb2.DOC_ITEM_LABEL_TITLE,
+            pb2.DOC_ITEM_LABEL_SECTION_HEADER,
+            pb2.DOC_ITEM_LABEL_LIST_ITEM,
+            pb2.DOC_ITEM_LABEL_CODE,
+            pb2.DOC_ITEM_LABEL_TEXT,
+        )
+    ):
+        entry = doc_msg.texts.add()
+        entry.text.base.self_ref = f"#/texts/{index}"
+        entry.text.base.label = label
+        entry.text.base.orig = "x"
+        entry.text.base.text = "x"
+
+    doc = proto_to_docling_document(doc_msg)
+    assert type(doc.texts[0]) is TitleModel
+    assert type(doc.texts[1]) is SectionHeaderModel
+    assert doc.texts[1].level == 1
+    assert type(doc.texts[2]) is ListItemModel
+    assert type(doc.texts[3]) is CodeItem
+    assert doc.texts[3].code_language == CodeLanguageLabel.UNKNOWN
+    assert doc.texts[4].label == DocItemLabel.TEXT

@@ -1992,8 +1992,35 @@ def _from_formula_item(msg: pb2.FormulaItem) -> FormulaItem:
     return FormulaItem(**_text_item_base_kwargs(msg.base))
 
 
+_TEXT_ARM_LABEL_CLASSES: dict[DocItemLabel, type[TextItem]] = {
+    DocItemLabel.TITLE: TitleItem,
+    DocItemLabel.SECTION_HEADER: SectionHeaderItem,
+    DocItemLabel.LIST_ITEM: ListItem,
+    DocItemLabel.FORMULA: FormulaItem,
+    DocItemLabel.FIELD_HEADING: FieldHeadingItem,
+    DocItemLabel.FIELD_VALUE: FieldValueItem,
+}
+
+
 def _from_text_item(msg: pb2.TextItem) -> TextItem:
     kwargs = _text_item_base_kwargs(msg.base)
+    # This converter's forward direction routes every TextItem subclass to
+    # its dedicated oneof arm, but the JSON dialect discriminates text items
+    # by `label` alone, and foreign producers mirror that by emitting all
+    # text items through the generic `text` arm. Dispatch on the label so
+    # such documents reconstruct the same classes the JSON loading path
+    # would produce (subclass-only fields keep their model defaults).
+    label = kwargs.get("label")
+    if label == DocItemLabel.CODE:
+        if msg.base.HasField("meta"):
+            kwargs["meta"] = FloatingMeta(
+                **_inherited_meta_kwargs(msg.base.meta),
+                **_custom_fields_kwargs(msg.base.meta),
+            )
+        return CodeItem(**kwargs)
+    subclass = _TEXT_ARM_LABEL_CLASSES.get(label) if label is not None else None
+    if subclass is not None:
+        return subclass(**kwargs)
     kwargs.setdefault("label", DocItemLabel.TEXT)
     return TextItem(**kwargs)
 
