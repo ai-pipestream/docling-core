@@ -74,10 +74,24 @@ the unrecognized case observable in logs and clients.
 
 ## Enforcement
 
-- Conversion logic: `docling_core/utils/conversion.py`
+- Conversion logic: `docling_core/utils/conversion.py` — both directions:
+  `docling_document_to_proto` (Pydantic to proto, `_to_*` helpers) and
+  `proto_to_docling_document` (proto to Pydantic, mirror-image `_from_*`
+  helpers). The reverse direction honors the `*_raw` two-field discriminator
+  contract above on import: tag > 0 maps to the Pydantic enum; tag 0 with a
+  non-empty raw falls back to the model's natural value where the strict
+  field cannot carry a string (e.g. `CodeLanguageLabel.UNKNOWN`, otherwise
+  the field default); both unset yields the model default/None so that
+  exclude-none dumps stay byte-identical. `SourceType` entries with an unset
+  oneof (foreign extension arms) are skipped silently on import.
 - Startup validation (serve): `docling_serve/grpc/schema_validator.py`
 - Tests:
-  - `docling-core/test/test_proto_conversion.py`
+  - `docling-core/test/test_proto_conversion.py` — includes round-trip
+    acceptance: `proto_to_docling_document(docling_document_to_proto(doc))`
+    must equal the original both by Pydantic equality and by strict
+    `export_to_dict()` equality, plus targeted reverse-direction tests for
+    the `*_raw` states, CodeItem meta, rich table cells, image data URIs,
+    graph data, charspans, and empty-vs-absent lists.
   - `docling-serve/tests/test_schema_validator.py`
 
 ## Developer Workflow
