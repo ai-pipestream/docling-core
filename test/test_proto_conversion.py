@@ -259,10 +259,15 @@ from docling_core.types.doc.document import (
     GraphCell,
     GraphData,
     GraphLink,
+    GroupItem,
     ImageRef,
+    InlineGroup,
     KeyValueItem,
     KeywordsMetaField,
     LanguageMetaField,
+    ListGroup,
+    ListItem,
+    OrderedList,
     Orientation,
     ProvenanceItem,
     RichTableCell,
@@ -277,6 +282,7 @@ from docling_core.types.doc.labels import (
     CodeLanguageLabel,
     GraphCellLabel,
     GraphLinkLabel,
+    GroupLabel,
     HumanLanguageLabel,
 )
 
@@ -755,3 +761,264 @@ def test_reverse_text_arm_dispatches_on_label():
     assert type(doc.texts[3]) is CodeItem
     assert doc.texts[3].code_language == CodeLanguageLabel.UNKNOWN
     assert doc.texts[4].label == DocItemLabel.TEXT
+
+
+# ---------------------------------------------------------------------------
+# Nested list groups
+#
+# `DoclingDocument.groups` is typed `list[Union[ListGroup, InlineGroup,
+# GroupItem]]`, and a group loaded from a mapping has an `ordered_list` label
+# rewritten to `list` by `ListGroup.patch_ordered`. A JSON dump/load round trip
+# therefore normalizes every legacy ordered-list group to a `ListGroup`, and no
+# `ListItem` is ever left parented to a non-`ListGroup` node. The proto round
+# trip must land on exactly the same document; that JSON round trip is the
+# parity truth these tests pin.
+# ---------------------------------------------------------------------------
+
+def _assert_json_parity_round_trip(doc: DoclingDocument) -> DoclingDocument:
+    """Assert the proto round trip agrees with a JSON dump/load round trip."""
+    proto_round_trip = proto_to_docling_document(docling_document_to_proto(doc))
+    json_round_trip = DoclingDocument.model_validate(doc.export_to_dict())
+    assert proto_round_trip == json_round_trip
+    assert proto_round_trip.export_to_dict() == json_round_trip.export_to_dict()
+    return proto_round_trip
+
+
+def _self_refs(doc: DoclingDocument) -> list[str]:
+    return [group.self_ref for group in doc.groups] + [
+        text.self_ref for text in doc.texts
+    ]
+
+
+def _add_group(doc: DoclingDocument, parent, factory, **kwargs):
+    """Attach a group to `parent` without going through the add_* helpers.
+
+    `add_list_group()` can only build a `ListGroup`, and `add_list_item()`
+    silently wraps its item in a fresh list group when the parent is not one.
+    Building the node directly is the only way to express a group carrying the
+    legacy `ordered_list` label, which is what a foreign producer or an older
+    document can put on the wire.
+    """
+    group = factory(
+        self_ref=f"#/groups/{len(doc.groups)}", parent=parent.get_ref(), **kwargs
+    )
+    doc.groups.append(group)
+    parent.children.append(group.get_ref())
+    return group
+
+
+def _add_list_item(doc: DoclingDocument, parent, text: str, **kwargs) -> ListItem:
+    item = ListItem(
+        self_ref=f"#/texts/{len(doc.texts)}",
+        parent=parent.get_ref(),
+        text=text,
+        orig=text,
+        **kwargs,
+    )
+    doc.texts.append(item)
+    parent.children.append(item.get_ref())
+    return item
+
+
+def _ordered_group(**kwargs) -> GroupItem:
+    with pytest.warns(DeprecationWarning):
+        return OrderedList(**kwargs)
+
+
+def test_round_trip_nested_list_groups():
+    """A list group nested in a list group is already migration-stable and so
+    must survive the proto round trip unchanged."""
+    doc = DoclingDocument(name="nested_lists")
+    outer = doc.add_list_group(name="outer")
+    doc.add_list_item(text="a", parent=outer)
+    inner = doc.add_list_group(name="inner", parent=outer)
+    doc.add_list_item(text="b", parent=inner, enumerated=True, marker="1.")
+    doc.add_list_item(text="c", parent=outer)
+
+    round_tripped = _assert_round_trip(doc)
+    assert [group.self_ref for group in round_tripped.groups] == [
+        "#/groups/0",
+        "#/groups/1",
+    ]
+    assert round_tripped.groups[1].parent.cref == "#/groups/0"
+
+
+def test_round_trip_ordered_list_nested_in_list_group():
+    """Regression: an ordered-list group nested inside a list group used to be
+    rebuilt as the deprecated `OrderedList`, which kept its `ListItem` children
+    "misplaced" and made the model synthesize replacement groups on load."""
+    doc = DoclingDocument(name="ordered_in_list")
+    outer = _add_group(doc, doc.body, ListGroup, name="outer")
+    _add_list_item(doc, outer, "a")
+    _add_list_item(doc, outer, "b")
+    inner = _add_group(doc, outer, _ordered_group, name="inner")
+    _add_list_item(doc, inner, "c", enumerated=True, marker="1.")
+    _add_list_item(doc, inner, "d", enumerated=True, marker="2.")
+
+    round_tripped = _assert_json_parity_round_trip(doc)
+
+    refs = _self_refs(round_tripped)
+    assert len(refs) == len(set(refs))
+    # No group is synthesized: the two authored groups and four items survive.
+    assert [group.self_ref for group in round_tripped.groups] == [
+        "#/groups/0",
+        "#/groups/1",
+    ]
+    assert [text.text for text in round_tripped.texts] == ["a", "b", "c", "d"]
+    assert [child.cref for child in round_tripped.groups[1].children] == [
+        "#/texts/2",
+        "#/texts/3",
+    ]
+    # Model-consistent normalization: the union resolves `ordered_list` to a
+    # `ListGroup`, exactly as a JSON load does.
+    assert type(round_tripped.groups[1]) is ListGroup
+    assert round_tripped.groups[1].label == GroupLabel.LIST
+    assert round_tripped.groups[1].name == "inner"
+    assert round_tripped.texts[2].enumerated is True
+    assert round_tripped.texts[2].marker == "1."
+
+
+def test_round_trip_list_nested_in_ordered_list_group():
+    doc = DoclingDocument(name="list_in_ordered")
+    outer = _add_group(doc, doc.body, _ordered_group, name="outer")
+    _add_list_item(doc, outer, "a", enumerated=True, marker="1.")
+    inner = _add_group(doc, outer, ListGroup, name="inner")
+    _add_list_item(doc, inner, "b")
+    _add_list_item(doc, outer, "c", enumerated=True, marker="2.")
+
+    round_tripped = _assert_json_parity_round_trip(doc)
+
+    refs = _self_refs(round_tripped)
+    assert len(refs) == len(set(refs))
+    assert [group.self_ref for group in round_tripped.groups] == [
+        "#/groups/0",
+        "#/groups/1",
+    ]
+    assert [text.text for text in round_tripped.texts] == ["a", "b", "c"]
+    assert [child.cref for child in round_tripped.groups[0].children] == [
+        "#/texts/0",
+        "#/groups/1",
+        "#/texts/2",
+    ]
+    assert round_tripped.groups[0].label == GroupLabel.LIST
+
+
+def test_round_trip_two_sibling_nested_groups():
+    doc = DoclingDocument(name="sibling_nested")
+    outer = _add_group(doc, doc.body, ListGroup, name="outer")
+    _add_list_item(doc, outer, "a")
+    first = _add_group(doc, outer, _ordered_group, name="first")
+    _add_list_item(doc, first, "b", enumerated=True, marker="1.")
+    _add_list_item(doc, first, "c", enumerated=True, marker="2.")
+    second = _add_group(doc, outer, _ordered_group, name="second")
+    _add_list_item(doc, second, "d", enumerated=True, marker="1.")
+    _add_list_item(doc, outer, "e")
+
+    round_tripped = _assert_json_parity_round_trip(doc)
+
+    refs = _self_refs(round_tripped)
+    assert len(refs) == len(set(refs))
+    assert [group.name for group in round_tripped.groups] == [
+        "outer",
+        "first",
+        "second",
+    ]
+    assert [text.text for text in round_tripped.texts] == ["a", "b", "c", "d", "e"]
+    assert [child.cref for child in round_tripped.groups[0].children] == [
+        "#/texts/0",
+        "#/groups/1",
+        "#/groups/2",
+        "#/texts/4",
+    ]
+    assert [child.cref for child in round_tripped.groups[1].children] == [
+        "#/texts/1",
+        "#/texts/2",
+    ]
+    assert [child.cref for child in round_tripped.groups[2].children] == ["#/texts/3"]
+
+
+def test_round_trip_nested_group_with_meta_and_formatting():
+    doc = DoclingDocument(name="nested_meta")
+    outer = _add_group(doc, doc.body, ListGroup, name="outer")
+    _add_list_item(doc, outer, "plain")
+    inner = _add_group(
+        doc,
+        outer,
+        _ordered_group,
+        name="inner",
+        meta=BaseMeta(summary=SummaryMetaField(text="inner summary")),
+    )
+    _add_list_item(
+        doc,
+        inner,
+        "styled",
+        enumerated=True,
+        marker="1.",
+        formatting=Formatting(bold=True, italic=True),
+        hyperlink="https://example.com/nested",
+    )
+    rich = _add_list_item(doc, inner, "annotated", enumerated=True, marker="2.")
+    rich.meta = BaseMeta(
+        language=LanguageMetaField(code=HumanLanguageLabel.EN, confidence=0.75),
+        keywords=KeywordsMetaField(values=["nested", "list"]),
+    )
+    rich.meta.set_custom_field(namespace="my_corp", name="rank", value={"n": 2})
+
+    round_tripped = _assert_json_parity_round_trip(doc)
+
+    styled = round_tripped.texts[1]
+    assert styled.formatting is not None
+    assert styled.formatting.bold is True
+    assert styled.formatting.italic is True
+    assert str(styled.hyperlink) == "https://example.com/nested"
+    annotated = round_tripped.texts[2]
+    assert annotated.meta.language.code == HumanLanguageLabel.EN
+    assert annotated.meta.keywords.values == ["nested", "list"]
+    assert annotated.meta.get_custom_part() == {"my_corp__rank": {"n": 2}}
+    # Group meta rides along with the normalized nested group.
+    assert round_tripped.groups[1].meta.summary.text == "inner summary"
+
+
+def test_reverse_normalizes_ordered_list_group_label():
+    """A foreign producer may still put `ordered_list` on the wire; the reverse
+    converter must resolve it the way the JSON union does."""
+    doc_msg = pb2.DoclingDocument(
+        name="foreign_ordered",
+        body=pb2.GroupItem(self_ref="#/body", name="_root_"),
+        furniture=pb2.GroupItem(self_ref="#/furniture", name="_root_"),
+    )
+    doc_msg.body.children.add().ref = "#/groups/0"
+    group = doc_msg.groups.add()
+    group.self_ref = "#/groups/0"
+    group.name = "legacy"
+    group.label = pb2.GROUP_LABEL_ORDERED_LIST
+    group.parent.ref = "#/body"
+    group.children.add().ref = "#/texts/0"
+    entry = doc_msg.texts.add()
+    entry.list_item.base.self_ref = "#/texts/0"
+    entry.list_item.base.label = pb2.DOC_ITEM_LABEL_LIST_ITEM
+    entry.list_item.base.text = "one"
+    entry.list_item.base.orig = "one"
+    entry.list_item.base.parent.ref = "#/groups/0"
+    entry.list_item.enumerated = True
+    entry.list_item.marker = "1."
+
+    doc = proto_to_docling_document(doc_msg)
+    assert type(doc.groups[0]) is ListGroup
+    assert doc.groups[0].label == GroupLabel.LIST
+    assert len(doc.groups) == 1
+    assert [child.cref for child in doc.groups[0].children] == ["#/texts/0"]
+    assert doc.texts[0].parent.cref == "#/groups/0"
+
+
+def test_inline_and_plain_groups_keep_their_class():
+    doc = DoclingDocument(name="group_classes")
+    inline = doc.add_inline_group(name="inl")
+    doc.add_text(label=DocItemLabel.TEXT, text="x", parent=inline)
+    plain = _add_group(doc, doc.body, GroupItem, name="chapter")
+    doc.add_text(label=DocItemLabel.TEXT, text="y", parent=plain)
+
+    round_tripped = _assert_round_trip(doc)
+    assert type(round_tripped.groups[0]) is InlineGroup
+    assert type(round_tripped.groups[1]) is GroupItem
+    assert round_tripped.groups[1].label == GroupLabel.UNSPECIFIED

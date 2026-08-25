@@ -69,7 +69,6 @@ from docling_core.types.doc.document import (
     TabularChartMetaField,
     InlineGroup,
     ListGroup,
-    OrderedList,
     TextItem,
     TitleItem,
     TrackSource,
@@ -2217,12 +2216,20 @@ def _from_group_item(msg: pb2.GroupItem) -> GroupItem:
         _GROUP_LABEL_REVERSE.get(msg.label, GroupLabel.UNSPECIFIED.value)
     )
     # Mirror the class the JSON loading path would pick for this label.
-    if label == GroupLabel.LIST:
+    #
+    # `DoclingDocument.groups` is typed `list[Union[ListGroup, InlineGroup,
+    # GroupItem]]`. When a serialized group is loaded from a mapping (the JSON
+    # path) pydantic resolves that union with `ListGroup.patch_ordered`
+    # rewriting an `ordered_list` label to `list`, so a legacy ordered-list
+    # group always lands as a `ListGroup`. Rebuilding the deprecated
+    # `OrderedList` class here instead would bypass that normalization (an
+    # already-built instance short-circuits the smart union) and leave every
+    # `ListItem` child parented to a non-`ListGroup` node. Those children then
+    # look misplaced to `validate_misplaced_list_items`, which synthesizes
+    # replacement list groups and re-appends the items, renumbering the
+    # `#/groups/*` and `#/texts/*` arenas.
+    if label in (GroupLabel.LIST, GroupLabel.ORDERED_LIST):
         return ListGroup(**kwargs)
-    if label == GroupLabel.ORDERED_LIST:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", category=DeprecationWarning)
-            return OrderedList(**kwargs)
     if label == GroupLabel.INLINE:
         return InlineGroup(**kwargs)
     return GroupItem(label=label, **kwargs)

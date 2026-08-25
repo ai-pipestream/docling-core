@@ -84,6 +84,18 @@ the unrecognized case observable in logs and clients.
   the field default); both unset yields the model default/None so that
   exclude-none dumps stay byte-identical. `SourceType` entries with an unset
   oneof (foreign extension arms) are skipped silently on import.
+  Import also mirrors the class the JSON loading path picks, not just the
+  field values: `DoclingDocument.groups` is a `Union[ListGroup, InlineGroup,
+  GroupItem]`, and resolving that union from a mapping rewrites a legacy
+  `ordered_list` group label to `list` (`ListGroup.patch_ordered`). The
+  reverse converter performs the same normalization, so a `GROUP_LABEL_ORDERED_LIST`
+  group imports as a `ListGroup`. Reconstructing the deprecated `OrderedList`
+  class instead would leave its `ListItem` children parented to a
+  non-`ListGroup` node, which the model's `validate_misplaced_list_items`
+  then "repairs" by synthesizing replacement groups and renumbering the
+  `#/groups/*` and `#/texts/*` arenas. This is a model normalization, not a
+  proto divergence: a JSON dump/load round trip of the same document does
+  exactly the same thing.
 - Startup validation (serve): `docling_serve/grpc/schema_validator.py`
 - Tests:
   - `docling-core/test/test_proto_conversion.py` — includes round-trip
@@ -91,7 +103,11 @@ the unrecognized case observable in logs and clients.
     must equal the original both by Pydantic equality and by strict
     `export_to_dict()` equality, plus targeted reverse-direction tests for
     the `*_raw` states, CodeItem meta, rich table cells, image data URIs,
-    graph data, charspans, and empty-vs-absent lists.
+    graph data, charspans, and empty-vs-absent lists. Where the model itself
+    normalizes on load (legacy `ordered_list` groups, misplaced list items),
+    the acceptance bar is instead parity with a JSON dump/load round trip of
+    the same document: proto round trip and JSON round trip must agree by
+    Pydantic equality and by `export_to_dict()` equality.
   - `docling-serve/tests/test_schema_validator.py`
 
 ## Developer Workflow
