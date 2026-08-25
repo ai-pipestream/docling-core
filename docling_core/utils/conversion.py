@@ -1627,8 +1627,11 @@ def _from_struct_value(msg: struct_pb2.Value) -> Any:
 
 
 def _custom_fields_kwargs(msg: Any) -> dict[str, Any]:
+    # Sorted so the Pydantic extras' insertion order (which is the dump
+    # order) is deterministic; protobuf map iteration order is not.
     return {
-        key: _from_struct_value(value) for key, value in msg.custom_fields.items()
+        key: _from_struct_value(msg.custom_fields[key])
+        for key in sorted(msg.custom_fields)
     }
 
 
