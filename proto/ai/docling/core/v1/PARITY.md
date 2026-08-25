@@ -103,8 +103,23 @@ The extension inventory, by owning message:
 | `TableData`          | `columns` (`TableColumnSchema`, with `ValueCondition`), `row_prov`, `record_layout` (`RecordLayoutMeta`) |
 | `PageItem`           | `unit`, `quality` (`PageQuality`)                                                      |
 | `SourceType`         | `collector` (`CollectorSource`), `generation` (`GenerationSource`)                     |
+| `CollectorSource`    | `raw_score`, `raw_score_kind`, `raw_score_samples` (the whole message is an extension) |
+| `BaseMeta`, `FloatingMeta`, `PictureMeta` | `alternatives` (`AlternativesMetaField`, carrying `Hypothesis` entries) |
 | `PictureAnnotation`  | `barcode` (`BarcodeAnnotation`)                                                        |
 
+
+### Presence Refinements
+
+Not every canonical change adds a field. `PictureClassificationClass.confidence`
+(number 2, `double`) moved from implicit to explicit presence: an engine that
+reports no probability now leaves it unset rather than claiming zero. Name,
+number, type and encoding are unchanged, so a consumer that reads the value
+keeps working; what changed is that a deliberately-set `0.0` now survives the
+round trip instead of vanishing. `buf breaking` reports this as a cardinality
+change, which is expected and correct to accept here: the vendored file
+mirrors the canonical schema, and the mirror is not the place to argue with
+it. The converter is unaffected, since the model's own field is a plain
+required float and the export side always has a value to write.
 
 ### Absorption Rule
 
@@ -191,11 +206,13 @@ custom field from the typed arm, which is what keeps them byte-equal.
     the acceptance bar is instead parity with a JSON dump/load round trip of
     the same document: proto round trip and JSON round trip must agree by
     Pydantic equality and by `export_to_dict()` equality. The extension set
-    has its own two tests: a proto document that sets every extension field
-    imports without error and dumps a document with no trace of them, and a
-    picture carrying typed barcode annotations imports with the
-    `pipestream__barcodes` projection fixtured as a JSON fragment, so a
-    change in key order or key set fails the test.
+    has its own tests: a proto document that sets every extension field
+    imports without error and dumps a document with no trace of them (while
+    the mapped members sharing those messages survive intact), a picture
+    carrying typed barcode annotations imports with the
+    `pipestream__barcodes` projection fixtured as a JSON fragment so a change
+    in key order or key set fails, and descriptor-level tests pin the field
+    numbers and presence rules the canonical schema chose.
   - `docling-serve/tests/test_schema_validator.py`
 
 ## Developer Workflow

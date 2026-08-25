@@ -1238,7 +1238,20 @@ def _every_extension_document() -> pb2.DoclingDocument:
             confidence=0.9,
             raw_score=-0.12,
             raw_score_kind="avg_logprob",
+            raw_score_samples=512,
         )
+    )
+    alternatives = pb2.AlternativesMetaField(
+        created_by="a-model",
+        hypotheses=[
+            pb2.Hypothesis(
+                text="abd",
+                raw_score=-1.4,
+                raw_score_kind="avg_logprob",
+                range=pb2.IntSpan(start=0, end=3),
+            ),
+            pb2.Hypothesis(text="obc"),
+        ],
     )
     generation = pb2.SourceType(
         generation=pb2.GenerationSource(
@@ -1263,6 +1276,10 @@ def _every_extension_document() -> pb2.DoclingDocument:
     text.text.base.label_raw = "future_label"
     text.text.base.style_name = "Body Text"
     text.text.base.source.extend([collector, generation])
+    # The absorbed meta arm sits next to a mapped one, so the test pins that
+    # absorbing it leaves the rest of the meta intact.
+    text.text.base.meta.summary.text = "a summary"
+    text.text.base.meta.alternatives.CopyFrom(alternatives)
 
     code = doc_msg.texts.add()
     code.code.self_ref = "#/texts/1"
@@ -1277,6 +1294,8 @@ def _every_extension_document() -> pb2.DoclingDocument:
     table.self_ref = "#/tables/0"
     table.parent.ref = "#/body"
     table.label = pb2.DOC_ITEM_LABEL_TABLE
+    table.meta.keywords.values.append("tabular")
+    table.meta.alternatives.CopyFrom(alternatives)
     table.data.num_rows = 1
     table.data.num_cols = 1
     cell = table.data.table_cells.add()
@@ -1324,6 +1343,9 @@ def _every_extension_document() -> pb2.DoclingDocument:
     picture.self_ref = "#/pictures/0"
     picture.parent.ref = "#/body"
     picture.label = pb2.DOC_ITEM_LABEL_PICTURE
+    picture.meta.topics.values.append("codes")
+    picture.meta.alternatives.CopyFrom(alternatives)
+    picture.meta.classification.predictions.add().class_name = "barcode"
     picture.annotations.add().barcode.CopyFrom(
         pb2.BarcodeAnnotation(
             format="QRCode", value="https://example.org/a", provenance="zxing"
@@ -1383,8 +1405,11 @@ _EXTENSION_KEYS = frozenset(
         "generation",
         "raw_score",
         "raw_score_kind",
+        "raw_score_samples",
         "number_format",
         "barcode",
+        "alternatives",
+        "hypotheses",
     }
 )
 
@@ -1434,6 +1459,12 @@ def test_every_extension_field_is_absorbed_on_import():
     assert doc.texts[0].prov[0].charspan == (0, 3)
     assert doc.texts[0].source == []
     assert doc.texts[1].text == "x = 1"
+    # Absorbing the alternatives arm leaves the rest of each meta standing.
+    assert doc.texts[0].meta.summary.text == "a summary"
+    assert doc.tables[0].meta.keywords.values == ["tabular"]
+    assert doc.pictures[0].meta.topics.values == ["codes"]
+    assert "alternatives" not in dumped["texts"][0]["meta"]
+    assert "alternatives" not in dumped["pictures"][0]["meta"]
     assert doc.tables[0].data.table_cells[0].text == "2023-11-14"
     assert doc.pages[1].size.width == 100.0
     assert doc.groups[0].name == "chapter"
@@ -1445,3 +1476,45 @@ def test_export_of_an_absorbed_document_stays_lossless_for_the_model():
     doc = proto_to_docling_document(_every_extension_document())
     round_tripped = proto_to_docling_document(docling_document_to_proto(doc))
     assert round_tripped.export_to_dict() == doc.export_to_dict()
+
+
+def test_alternatives_meta_field_numbers_match_the_wire_schema():
+    """The alternates arm hangs off all three meta shapes, at the number the
+    wire schema gave it in each."""
+    for message_name, number in (
+        ("BaseMeta", 6),
+        ("FloatingMeta", 7),
+        ("PictureMeta", 11),
+    ):
+        descriptor = pb2.DESCRIPTOR.message_types_by_name[message_name]
+        field = descriptor.fields_by_name["alternatives"]
+        assert field.number == number
+        assert field.message_type.name == "AlternativesMetaField"
+    hypothesis = pb2.DESCRIPTOR.message_types_by_name["Hypothesis"]
+    assert [f.name for f in hypothesis.fields] == [
+        "text",
+        "raw_score",
+        "raw_score_kind",
+        "range",
+    ]
+
+
+def test_picture_classification_confidence_is_presence_tracked():
+    """An engine that reports no probability leaves the field unset instead of
+    claiming zero, so the wire field distinguishes the two."""
+    field = pb2.PictureClassificationClass.DESCRIPTOR.fields_by_name["confidence"]
+    assert field.number == 2
+    assert field.type == field.TYPE_DOUBLE
+    assert field.has_presence
+
+    msg = pb2.PictureClassificationClass(class_name="qr")
+    assert not msg.HasField("confidence")
+    msg.confidence = 0.0
+    assert msg.HasField("confidence")
+
+
+def test_collector_source_carries_the_score_sample_count():
+    field = pb2.CollectorSource.DESCRIPTOR.fields_by_name["raw_score_samples"]
+    assert field.number == 7
+    assert field.type == field.TYPE_UINT64
+    assert field.has_presence
