@@ -1133,6 +1133,7 @@ def _every_extension_document() -> pb2.DoclingDocument:
             binary_hash=7,
             filename="page.html",
             uri="https://example.org/page.html",
+            source_id="doc-42",
             web=pb2.WebMeta(
                 target_uri="https://example.org/page.html",
                 canonical_uri="https://example.org/",
@@ -1155,6 +1156,80 @@ def _every_extension_document() -> pb2.DoclingDocument:
             keywords=["wire", "schema"],
             schema_location="https://example.org/schema.xsd",
             extra={"department": "research"},
+            identifiers=[
+                pb2.Identifier(kind="doi", value="10.1000/xyz", scope="article")
+            ],
+            classifications=[
+                pb2.Classification(
+                    scheme="cpc", code="G06F", edition="2023.01", office="EP"
+                )
+            ],
+            license=pb2.LicenseMeta(
+                type_uri="https://creativecommons.org/licenses/by/4.0/",
+                statement="CC BY 4.0",
+                copyright_statement="(c) 2023 Example",
+                copyright_year=2023,
+                copyright_holder="Example",
+            ),
+            funding=[
+                pb2.FundingAward(
+                    funder="Example Foundation",
+                    award_id="EF-1",
+                    statement="Funded by EF-1.",
+                )
+            ],
+            namespaces=[
+                pb2.NamespaceBinding(prefix="dc", uri="http://purl.org/dc/elements/1.1/")
+            ],
+            schema_locations=[
+                pb2.SchemaLocation(
+                    namespace="http://purl.org/dc/elements/1.1/",
+                    location="https://example.org/dc.xsd",
+                )
+            ],
+            created_civil=pb2.CivilDateTime(year=2023, month=11, day=14),
+            modified_civil=pb2.CivilDateTime(year=2023, month=11, day=15),
+            subject="Extensions",
+            modified_by="editor",
+            printed=stamp,
+            printed_raw="2023-11-14T22:13:20Z",
+            printer="Example Printer",
+            template="report.dotx",
+            editing_cycles=3,
+            editing_duration_seconds=7200,
+            statistics=pb2.DocumentStatistics(
+                pages=1,
+                words=2,
+                characters=10,
+                paragraphs=1,
+                tables=1,
+                images=1,
+                objects=1,
+                cells=1,
+                sheets=1,
+            ),
+            user_properties=[
+                pb2.UserProperty(name="p_text", text="v"),
+                pb2.UserProperty(name="p_number", number=1.5),
+                pb2.UserProperty(name="p_boolean", boolean=True),
+                pb2.UserProperty(name="p_instant", instant=stamp),
+                pb2.UserProperty(
+                    name="p_date", date=pb2.CivilDateTime(year=2023, month=11, day=14)
+                ),
+            ],
+            format_version="1.7",
+            structured=True,
+            authoring_tool="Example Writer",
+            protection=pb2.Protection(
+                encrypted=True,
+                handler="Standard",
+                key_bits=256,
+                opened_without_password=True,
+                allows_extraction=True,
+                allows_printing=True,
+            ),
+            raw_metadata=b"<x:xmpmeta/>",
+            trapped=pb2.TRAPPED_UNKNOWN,
         ),
         attachments=[
             pb2.SubDocumentRef(
@@ -1163,6 +1238,8 @@ def _every_extension_document() -> pb2.DoclingDocument:
                 media_type="application/pdf",
                 size_bytes=1024,
                 item_ref="#/texts/0",
+                class_id="embedded",
+                kind="attachment",
             )
         ],
         outline=[
@@ -1203,6 +1280,43 @@ def _every_extension_document() -> pb2.DoclingDocument:
             sent=stamp,
             sent_raw="Tue, 14 Nov 2023 22:13:20 GMT",
         ),
+        page_styles=[
+            pb2.PageStyle(
+                name="Default",
+                size=pb2.Size(width=612.0, height=792.0),
+                margins=pb2.Margins(left=72.0, top=72.0, right=72.0, bottom=72.0),
+                columns=1,
+                variant="first",
+            )
+        ],
+        named_ranges=[
+            pb2.NamedRange(
+                name="Data",
+                range=pb2.GridSpan(
+                    start=pb2.GridCell(row=0, col=0, sheet="Sheet1"),
+                    end=pb2.GridCell(row=9, col=3, sheet="Sheet1"),
+                ),
+                has_headers=True,
+                has_totals=True,
+                kind="table",
+                expression="Sheet1!$A$1:$D$10",
+            )
+        ],
+        pivots=[
+            pb2.PivotSpec(
+                name="Pivot1",
+                source=pb2.GridSpan(
+                    start=pb2.GridCell(row=0, col=0), end=pb2.GridCell(row=9, col=3)
+                ),
+                output=pb2.GridSpan(
+                    start=pb2.GridCell(row=0, col=5), end=pb2.GridCell(row=4, col=7)
+                ),
+                row_fields=["region"],
+                column_fields=["quarter"],
+                data_fields=["total"],
+                page_fields=["year"],
+            )
+        ],
     )
 
     # Every provenance arm on one item.
@@ -1221,7 +1335,18 @@ def _every_extension_document() -> pb2.DoclingDocument:
     )
     span = pb2.InlineSpan(
         range=pb2.IntSpan(start=0, end=3),
-        formatting=pb2.Formatting(bold=True),
+        formatting=pb2.Formatting(
+            bold=True,
+            monospace=True,
+            small_caps=True,
+            math=True,
+            mark=True,
+            small=True,
+            insertion=True,
+            abbreviation=True,
+            quote=True,
+            overline=True,
+        ),
         hyperlink="https://example.org/",
         target=pb2.FineRef(ref="#/texts/1"),
         font_family="Helvetica",
@@ -1229,6 +1354,12 @@ def _every_extension_document() -> pb2.DoclingDocument:
         color="#112233",
         language="en",
         field_code="PAGE",
+        reference_kind=pb2.REFERENCE_KIND_CITATION,
+        reference="smith2023",
+        link_title="Example",
+        raw="<a href=...>",
+        style_name="Emphasis",
+        highlight_color="#ffff00",
     )
     collector = pb2.SourceType(
         collector=pb2.CollectorSource(
@@ -1280,6 +1411,36 @@ def _every_extension_document() -> pb2.DoclingDocument:
     # absorbing it leaves the rest of the meta intact.
     text.text.base.meta.summary.text = "a summary"
     text.text.base.meta.alternatives.CopyFrom(alternatives)
+    text.text.base.comment_meta.CopyFrom(
+        pb2.CommentMeta(
+            author="reviewer",
+            initials="RV",
+            timestamp=stamp,
+            timestamp_raw="2023-11-14T22:13:20Z",
+            resolved=True,
+            parent=pb2.FineRef(ref="#/texts/1"),
+            anchored_text="abc",
+            shown=True,
+        )
+    )
+    text.text.base.shape.CopyFrom(
+        pb2.ShapeMeta(
+            shape_type="textbox",
+            name="TextBox 1",
+            chain_next="TextBox 2",
+            chain_prev="TextBox 0",
+            z_order=3,
+            rotation_degrees=90.0,
+        )
+    )
+    text.text.base.footnote_meta.CopyFrom(
+        pb2.FootnoteMeta(
+            label="1", endnote=True, mark=pb2.FineRef(ref="#/texts/1")
+        )
+    )
+    text.text.base.index_meta.CopyFrom(
+        pb2.IndexMeta(service="index", title="Extensions, wire")
+    )
 
     code = doc_msg.texts.add()
     code.code.self_ref = "#/texts/1"
@@ -1309,6 +1470,8 @@ def _every_extension_document() -> pb2.DoclingDocument:
     )
     cell.value.number_format = "yyyy-mm-dd"
     cell.spans.append(span)
+    cell.align = pb2.ALIGNMENT_CENTER
+    cell.valign = pb2.VERTICAL_ALIGNMENT_MIDDLE
     table.data.columns.append(
         pb2.TableColumnSchema(
             name="WHEN",
@@ -1319,6 +1482,9 @@ def _every_extension_document() -> pb2.DoclingDocument:
             level=5,
             occurs_index=1,
             width=64.0,
+            width_raw="64pt",
+            align=pb2.ALIGNMENT_RIGHT,
+            valign=pb2.VERTICAL_ALIGNMENT_TOP,
             conditions=[
                 pb2.ValueCondition(
                     name="VALID",
@@ -1346,6 +1512,22 @@ def _every_extension_document() -> pb2.DoclingDocument:
     picture.meta.topics.values.append("codes")
     picture.meta.alternatives.CopyFrom(alternatives)
     picture.meta.classification.predictions.add().class_name = "barcode"
+    picture.meta.accessibility_title = "A QR code"
+    picture.shape.CopyFrom(pb2.ShapeMeta(shape_type="picture", name="Picture 1"))
+    picture.hyperlink = "https://example.org/figure"
+    picture.target.CopyFrom(pb2.FineRef(ref="#/texts/0"))
+    picture.chart.CopyFrom(
+        pb2.ChartMeta(
+            sources=[
+                pb2.GridSpan(
+                    start=pb2.GridCell(row=0, col=0, sheet="Sheet1"),
+                    end=pb2.GridCell(row=9, col=1, sheet="Sheet1"),
+                )
+            ],
+            has_row_headers=True,
+            has_column_headers=True,
+        )
+    )
     picture.annotations.add().barcode.CopyFrom(
         pb2.BarcodeAnnotation(
             format="QRCode", value="https://example.org/a", provenance="zxing"
@@ -1357,12 +1539,38 @@ def _every_extension_document() -> pb2.DoclingDocument:
     group.parent.ref = "#/body"
     group.name = "chapter"
     group.label_raw = "future_group_label"
+    group.sheet.CopyFrom(
+        pb2.SheetMeta(
+            index=0,
+            visible=True,
+            tab_color="#00ff00",
+            print_areas=[
+                pb2.GridSpan(
+                    start=pb2.GridCell(row=0, col=0), end=pb2.GridCell(row=9, col=3)
+                )
+            ],
+        )
+    )
+
+    field_item = doc_msg.field_items.add()
+    field_item.self_ref = "#/field_items/0"
+    field_item.parent.ref = "#/body"
+    field_item.label = pb2.DOC_ITEM_LABEL_FIELD_ITEM
+    field_item.field_name = "country"
+    field_item.options.extend(["US", "DE"])
+    field_item.selected_index = 1
+    field_item.span.CopyFrom(pb2.FineRef(ref="#/texts/0"))
+    field_item.parameters["required"] = "true"
 
     page = doc_msg.pages[1]
     page.page_no = 1
     page.size.width = 100.0
     page.size.height = 200.0
     page.unit = "pt"
+    page.style_name = "Default"
+    page.page_label = "iv"
+    page.media_size.CopyFrom(pb2.Size(width=612.0, height=792.0))
+    page.user_unit = 1.0
     page.quality.CopyFrom(
         pb2.PageQuality(
             garble_score=0.01,
@@ -1410,6 +1618,70 @@ _EXTENSION_KEYS = frozenset(
         "barcode",
         "alternatives",
         "hypotheses",
+        # Scholarly and declaration block.
+        "identifiers",
+        "classifications",
+        "license",
+        "funding",
+        "namespaces",
+        "schema_locations",
+        "created_civil",
+        "modified_civil",
+        "reference_kind",
+        "monospace",
+        "small_caps",
+        "math",
+        # Markup block.
+        "mark",
+        "small",
+        "insertion",
+        "abbreviation",
+        "quote",
+        "width_raw",
+        "align",
+        "valign",
+        "link_title",
+        "highlight_color",
+        # Office block.
+        "comment_meta",
+        "shape",
+        "footnote_meta",
+        "index_meta",
+        "sheet",
+        "page_styles",
+        "named_ranges",
+        "pivots",
+        "subject",
+        "modified_by",
+        "printed",
+        "printed_raw",
+        "printer",
+        "template",
+        "editing_cycles",
+        "editing_duration_seconds",
+        "statistics",
+        "user_properties",
+        "class_id",
+        "accessibility_title",
+        "style_name",
+        "overline",
+        # PDF block.
+        "format_version",
+        "structured",
+        "authoring_tool",
+        "protection",
+        "raw_metadata",
+        "trapped",
+        "source_id",
+        "page_label",
+        "media_size",
+        "user_unit",
+        "chart",
+        # Office residuals.
+        "field_name",
+        "options",
+        "selected_index",
+        "parameters",
     }
 )
 
@@ -1437,10 +1709,20 @@ def test_every_extension_field_is_absorbed_on_import():
     leaked = _keys_in(dumped) & _EXTENSION_KEYS
     assert leaked == set()
     assert "pipestream__barcodes" in dumped["pictures"][0]["meta"]
-    # `value` and `grid` are dialect key names too, so the ambiguous pair is
-    # checked where the extensions would have landed.
+    # Some extensions reuse a name the dialect already spends elsewhere
+    # (`value`, `grid`, `hyperlink`, `target`, `span`, `raw`, `reference`),
+    # so a whole-document key scan cannot judge them. They are checked where
+    # the extension would have landed instead.
     cell = dumped["tables"][0]["data"]["table_cells"][0]
     assert "value" not in cell
+    picture = dumped["pictures"][0]
+    assert "hyperlink" not in picture
+    assert "target" not in picture
+    field_item = dumped["field_items"][0]
+    assert "span" not in field_item
+    text_dump = dumped["texts"][0]
+    assert "raw" not in text_dump
+    assert "reference" not in text_dump
     assert set(dumped["tables"][0]["data"]) == {
         "table_cells",
         "num_rows",

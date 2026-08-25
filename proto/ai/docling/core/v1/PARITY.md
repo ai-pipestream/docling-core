@@ -89,37 +89,69 @@ fields are appended after the numbers the Docling mirror occupies, never
 interleaved with them, so a Docling addition still lands on the number Docling
 chose.
 
-The extension inventory, by owning message:
+The inventory comes in two halves. First, the mirrored messages that carry
+extension fields alongside their mapped ones. These are the rows that matter
+to the converter, because absorbing a field here must not disturb the mapped
+members sitting next to it.
 
 
 | Message              | Extension fields                                                                     |
 | -------------------- | ------------------------------------------------------------------------------------ |
-| `DoclingDocument`    | `source_meta` (`DocumentMeta`), `attachments` (`SubDocumentRef`), `outline` (`OutlineEntry`), `meta_tags` (`MetaTag`), `structured_data` (`StructuredData`), `media` (`MediaMeta`), `changes` (`ChangeRecord`), `anchors` (`NamedAnchor`), `email` (`EmailMeta`) |
-| `DocumentOrigin`     | `web` (`WebMeta`)                                                                     |
+| `DoclingDocument`    | `source_meta` (`DocumentMeta`), `attachments` (`SubDocumentRef`), `outline` (`OutlineEntry`), `meta_tags` (`MetaTag`), `structured_data` (`StructuredData`), `media` (`MediaMeta`), `changes` (`ChangeRecord`), `anchors` (`NamedAnchor`), `email` (`EmailMeta`), `page_styles` (`PageStyle`), `named_ranges` (`NamedRange`), `pivots` (`PivotSpec`) |
+| `DocumentOrigin`     | `web` (`WebMeta`), `source_id`                                                        |
 | `ProvenanceItem`     | `time` (`TimeSpan`), `byte_range` (`ByteSpan`), `grid` (`GridCell`), `polygon` (`Point`) |
-| `TextItemBase`       | `spans` (`InlineSpan`), `admonition_kind`, `label_raw`, `style_name`                   |
-| `GroupItem`, `CodeItem` | `label_raw`                                                                        |
-| `TableCell`          | `value` (`CellValue`, with `CivilDateTime`), `spans` (`InlineSpan`)                    |
-| `TableData`          | `columns` (`TableColumnSchema`, with `ValueCondition`), `row_prov`, `record_layout` (`RecordLayoutMeta`) |
-| `PageItem`           | `unit`, `quality` (`PageQuality`)                                                      |
+| `TextItemBase`       | `spans` (`InlineSpan`), `admonition_kind`, `label_raw`, `style_name`, `comment_meta` (`CommentMeta`), `shape` (`ShapeMeta`), `footnote_meta` (`FootnoteMeta`), `index_meta` (`IndexMeta`) |
+| `GroupItem`          | `label_raw`, `sheet` (`SheetMeta`)                                                    |
+| `CodeItem`           | `label_raw`                                                                           |
+| `Formatting`         | `monospace`, `small_caps`, `math`, `mark`, `small`, `insertion`, `abbreviation`, `quote`, `overline` |
+| `TableCell`          | `value` (`CellValue`, with `CivilDateTime`), `spans` (`InlineSpan`), `align`, `valign` |
+| `TableData`          | `columns` (`TableColumnSchema`), `row_prov`, `record_layout` (`RecordLayoutMeta`)      |
+| `PageItem`           | `unit`, `quality` (`PageQuality`), `style_name`, `page_label`, `media_size`, `user_unit` |
+| `PictureItem`        | `shape` (`ShapeMeta`), `hyperlink`, `target`, `chart` (`ChartMeta`)                    |
+| `PictureMeta`        | `accessibility_title`                                                                 |
+| `FieldItem`          | `field_name`, `options`, `selected_index`, `span`, `parameters`                        |
 | `SourceType`         | `collector` (`CollectorSource`), `generation` (`GenerationSource`)                     |
-| `CollectorSource`    | `raw_score`, `raw_score_kind`, `raw_score_samples` (the whole message is an extension) |
 | `BaseMeta`, `FloatingMeta`, `PictureMeta` | `alternatives` (`AlternativesMetaField`, carrying `Hypothesis` entries) |
 | `PictureAnnotation`  | `barcode` (`BarcodeAnnotation`)                                                        |
 
 
+Second, the messages that exist only to hold extension data. Nothing in them
+is mapped, so the converter never reaches them at all:
+
+`AlternativesMetaField`, `BarcodeAnnotation`, `ByteSpan`, `CellValue`,
+`ChangeRecord`, `ChartMeta`, `CivilDateTime`, `Classification`,
+`CollectorSource`, `CommentMeta`, `DocumentMeta`, `DocumentStatistics`,
+`EmailMeta`, `EmailParty`, `FootnoteMeta`, `FundingAward`, `GenerationSource`,
+`GridCell`, `GridSpan`, `Hypothesis`, `Identifier`, `IndexMeta`, `InlineSpan`,
+`LicenseMeta`, `Margins`, `MediaMeta`, `MetaTag`, `NamedAnchor`, `NamedRange`,
+`NamespaceBinding`, `OutlineEntry`, `PageQuality`, `PageStyle`, `PivotSpec`,
+`Point`, `Protection`, `RecordLayoutMeta`, `SchemaLocation`, `ShapeMeta`,
+`SheetMeta`, `StructuredData`, `SubDocumentRef`, `TableColumnSchema`,
+`TimeSpan`, `UserProperty`, `ValueCondition`, `ValueRange`, `WebMeta`.
+
+Four enums serve them and have no dialect counterpart: `ReferenceKind`,
+`Alignment`, `VerticalAlignment` and `Trapped`.
+
+
 ### Presence Refinements
 
-Not every canonical change adds a field. `PictureClassificationClass.confidence`
-(number 2, `double`) moved from implicit to explicit presence: an engine that
-reports no probability now leaves it unset rather than claiming zero. Name,
-number, type and encoding are unchanged, so a consumer that reads the value
-keeps working; what changed is that a deliberately-set `0.0` now survives the
-round trip instead of vanishing. `buf breaking` reports this as a cardinality
-change, which is expected and correct to accept here: the vendored file
-mirrors the canonical schema, and the mirror is not the place to argue with
-it. The converter is unaffected, since the model's own field is a plain
-required float and the export side always has a value to write.
+Not every canonical change adds a field. Two fields have moved from implicit
+to explicit presence at the same number, name and type:
+
+- `PictureClassificationClass.confidence` (2, `double`), so an engine that
+  reports no probability leaves it unset rather than claiming zero.
+- `TableColumnSchema.name` (1, `string`), so a column the source leaves
+  unnamed is distinguishable from one named with the empty string.
+
+The encoding is unchanged in both cases, so a consumer that reads the value
+keeps working; what changed is that a deliberately-set zero value now
+survives the round trip instead of vanishing. `buf breaking` reports each as
+a cardinality change, which is expected and correct to accept here: the
+vendored file mirrors the canonical schema, and the mirror is not the place
+to argue with it. The converter is unaffected by either. The classification
+one is only ever written on export, where the model's own field is a plain
+required float and a value is always present; the column schema belongs to a
+message the converter never reads.
 
 ### Absorption Rule
 
@@ -208,7 +240,9 @@ custom field from the typed arm, which is what keeps them byte-equal.
     Pydantic equality and by `export_to_dict()` equality. The extension set
     has its own tests: a proto document that sets every extension field
     imports without error and dumps a document with no trace of them (while
-    the mapped members sharing those messages survive intact), a picture
+    the mapped members sharing those messages survive intact; the names an
+    extension shares with a dialect key are checked positionally, since a
+    whole-document key scan cannot judge those), a picture
     carrying typed barcode annotations imports with the
     `pipestream__barcodes` projection fixtured as a JSON fragment so a change
     in key order or key set fails, and descriptor-level tests pin the field
