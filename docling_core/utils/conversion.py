@@ -1634,6 +1634,34 @@ def _custom_fields_kwargs(msg: Any) -> dict[str, Any]:
     }
 
 
+# The namespaced custom field the typed picture barcode annotations project
+# into. The wire never carries the untyped copy; both exporters synthesize it,
+# so a document that crosses either bridge dumps the same bytes.
+_BARCODE_CUSTOM_FIELD = "pipestream__barcodes"
+
+
+def _barcode_payloads(msgs: Any) -> list[dict[str, str]]:
+    """Project the typed barcode annotations into their dialect payloads.
+
+    One dict per barcode, in annotation order, each with the keys `format`,
+    `provenance` and `value` in that order: the sorted key order the canonical
+    exporter emits for a struct value.
+    """
+    payloads: list[dict[str, str]] = []
+    for msg in msgs:
+        if msg.WhichOneof("annotation") != "barcode":
+            continue
+        barcode = msg.barcode
+        payloads.append(
+            {
+                "format": barcode.format,
+                "provenance": barcode.provenance,
+                "value": barcode.value,
+            }
+        )
+    return payloads
+
+
 def _from_ref(msg: pb2.RefItem) -> RefItem:
     return RefItem(cref=msg.ref)
 
@@ -1830,7 +1858,10 @@ def _from_floating_meta(msg: pb2.FloatingMeta) -> FloatingMeta:
     return FloatingMeta(**kwargs, **_custom_fields_kwargs(msg))
 
 
-def _from_picture_meta(msg: pb2.PictureMeta) -> PictureMeta:
+def _from_picture_meta(
+    msg: pb2.PictureMeta,
+    barcodes: Optional[list[dict[str, str]]] = None,
+) -> PictureMeta:
     kwargs = _inherited_meta_kwargs(msg)
     if msg.HasField("description"):
         kwargs["description"] = _from_description_meta(msg.description)
@@ -1844,7 +1875,15 @@ def _from_picture_meta(msg: pb2.PictureMeta) -> PictureMeta:
         kwargs["tabular_chart"] = _from_tabular_chart_meta(msg.tabular_chart)
     if msg.HasField("code"):
         kwargs["code"] = _from_code_meta(msg.code)
-    return PictureMeta(**kwargs, **_custom_fields_kwargs(msg))
+    custom = _custom_fields_kwargs(msg)
+    if barcodes and _BARCODE_CUSTOM_FIELD not in custom:
+        # A meta-carried field of the same name is the producer's own copy and
+        # always wins; the typed arm only fills a gap. Re-sorting after the
+        # insert keeps the extras' insertion order (which is the dump order)
+        # the sorted order the canonical exporter emits.
+        custom[_BARCODE_CUSTOM_FIELD] = barcodes
+        custom = {key: custom[key] for key in sorted(custom)}
+    return PictureMeta(**kwargs, **custom)
 
 
 def _from_formatting(msg: pb2.Formatting) -> Formatting:
@@ -2133,9 +2172,15 @@ def _from_table_item(msg: pb2.TableItem) -> TableItem:
 
 def _from_picture_item(msg: pb2.PictureItem) -> PictureItem:
     # See _from_table_item for why proto `annotations` are ignored on import.
+    # The typed barcode arm is the single exception: it has no first-class
+    # model slot, so it projects into the picture meta as the
+    # `pipestream__barcodes` custom field, matching what the canonical
+    # exporter derives from the same annotations. A picture that carries
+    # barcodes but no proto meta still gets a meta, exactly as on that side.
     kwargs = _floating_item_kwargs(msg)
-    if msg.HasField("meta"):
-        kwargs["meta"] = _from_picture_meta(msg.meta)
+    barcodes = _barcode_payloads(msg.annotations)
+    if msg.HasField("meta") or barcodes:
+        kwargs["meta"] = _from_picture_meta(msg.meta, barcodes)
     return PictureItem(**kwargs)
 
 

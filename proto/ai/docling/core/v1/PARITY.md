@@ -72,6 +72,89 @@ consumer is older than the producer. The `*_raw` companion is not a
 substitute for either; it is the human-readable carry-along that makes
 the unrecognized case observable in logs and clients.
 
+## Wire Schema Extensions
+
+The vendored proto is field-identical with the canonical wire schema this
+branch bridges to. That schema mirrors the DoclingDocument v2 JSON schema and
+then layers an additive extension set on top of it: shapes the fleet needs on
+the wire that the dialect has no way to spell. Removing every extension yields
+a document the dialect can express, which is what makes absorption safe.
+
+Only four things differ between the two files, none of them a field: the
+package, the file path, the Java options, and the root message name
+(`DoclingDocument` here, `Document` there). Every message name, field name,
+field number, field type, oneof grouping and enum tag is identical, and the
+sync is verified by comparing descriptors, not by reading the diff. Extension
+fields are appended after the numbers the Docling mirror occupies, never
+interleaved with them, so a Docling addition still lands on the number Docling
+chose.
+
+The extension inventory, by owning message:
+
+
+| Message              | Extension fields                                                                     |
+| -------------------- | ------------------------------------------------------------------------------------ |
+| `DoclingDocument`    | `source_meta` (`DocumentMeta`), `attachments` (`SubDocumentRef`), `outline` (`OutlineEntry`), `meta_tags` (`MetaTag`), `structured_data` (`StructuredData`), `media` (`MediaMeta`), `changes` (`ChangeRecord`), `anchors` (`NamedAnchor`), `email` (`EmailMeta`) |
+| `DocumentOrigin`     | `web` (`WebMeta`)                                                                     |
+| `ProvenanceItem`     | `time` (`TimeSpan`), `byte_range` (`ByteSpan`), `grid` (`GridCell`), `polygon` (`Point`) |
+| `TextItemBase`       | `spans` (`InlineSpan`), `admonition_kind`, `label_raw`, `style_name`                   |
+| `GroupItem`, `CodeItem` | `label_raw`                                                                        |
+| `TableCell`          | `value` (`CellValue`, with `CivilDateTime`), `spans` (`InlineSpan`)                    |
+| `TableData`          | `columns` (`TableColumnSchema`, with `ValueCondition`), `row_prov`, `record_layout` (`RecordLayoutMeta`) |
+| `PageItem`           | `unit`, `quality` (`PageQuality`)                                                      |
+| `SourceType`         | `collector` (`CollectorSource`), `generation` (`GenerationSource`)                     |
+| `PictureAnnotation`  | `barcode` (`BarcodeAnnotation`)                                                        |
+
+
+### Absorption Rule
+
+The Pydantic model is the dialect, and it has no slot for any of this. So:
+
+**`proto_to_docling_document` absorbs every extension field. It does not
+invent a model field for one, does not stash one in an extra, and does not
+raise on one.** A document that used every extension converts cleanly and
+dumps a valid dialect document; the extension data simply is not in the dump.
+
+`docling_document_to_proto` emits no extension field, because the model never
+holds one and there is nothing to read. It stays tolerant of them by
+construction: it builds messages, it does not consume them.
+
+Absorption is the deliberate posture, not an oversight. The wire carries more
+than the dialect can say; the bridge's job is to yield the dialect document
+the canonical exporter would emit from the same message, and that document
+does not contain these fields. When upstream grows a real model slot for one
+of them, the field graduates out of this list into an ordinary mapped field.
+
+The one exception follows.
+
+### The One Active Projection: `pipestream__barcodes`
+
+`PictureAnnotation.barcode` is projected on import rather than absorbed,
+because the canonical exporter projects it too and the two exports have to
+agree byte for byte.
+
+A picture's typed barcode annotations become a single picture-meta custom
+field named `pipestream__barcodes`. Its value is a list with one object per
+barcode annotation, in annotation order. Each object carries exactly three
+string members, in sorted key order: `format`, `provenance`, `value`.
+
+The rules match `picture_custom_fields` in the canonical renderer
+(`src/render/canonical_json_renderer.cpp`) exactly:
+
+- A picture whose proto meta already carries a `pipestream__barcodes` custom
+  field keeps the producer's own value; the typed arm never overrides it, it
+  only fills a gap.
+- A picture that carries barcodes but no proto `meta` still gets a meta on
+  import, holding just the projection.
+- Custom fields dump in sorted key order, so the projected entry sorts in
+  with the rest rather than being appended at the end.
+- Every other annotation arm stays ignored on import. `meta` is the export
+  contract and the annotation list is deprecated model-side; see
+  `_from_table_item`.
+
+The wire never carries an untyped copy of this data. Both sides synthesize the
+custom field from the typed arm, which is what keeps them byte-equal.
+
 ## Enforcement
 
 - Conversion logic: `docling_core/utils/conversion.py` — both directions:
@@ -107,7 +190,12 @@ the unrecognized case observable in logs and clients.
     normalizes on load (legacy `ordered_list` groups, misplaced list items),
     the acceptance bar is instead parity with a JSON dump/load round trip of
     the same document: proto round trip and JSON round trip must agree by
-    Pydantic equality and by `export_to_dict()` equality.
+    Pydantic equality and by `export_to_dict()` equality. The extension set
+    has its own two tests: a proto document that sets every extension field
+    imports without error and dumps a document with no trace of them, and a
+    picture carrying typed barcode annotations imports with the
+    `pipestream__barcodes` projection fixtured as a JSON fragment, so a
+    change in key order or key set fails the test.
   - `docling-serve/tests/test_schema_validator.py`
 
 ## Developer Workflow
@@ -119,6 +207,14 @@ When changing the model or IDL:
 3. Update validator rules only for intentional, documented exceptions.
 4. Update tests in `test/test_proto_conversion.py`.
 5. Keep this file current if an intentional difference is added/removed.
+
+When the canonical wire schema grows a field, port it here with its number
+and name unchanged, regenerate, and verify the sync by comparing descriptors
+rather than by reading the diff: message set, field numbers, names, types,
+labels, oneof grouping and enum tags must match on both sides. Then decide
+the converter's posture: absorbed (the default, and correct whenever the
+model has no slot), or projected (only when the canonical exporter projects
+it too, and then the projection must match byte for byte).
 
 ## Keeping In Sync With Upstream `main`
 

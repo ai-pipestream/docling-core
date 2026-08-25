@@ -1022,3 +1022,426 @@ def test_inline_and_plain_groups_keep_their_class():
     assert type(round_tripped.groups[0]) is InlineGroup
     assert type(round_tripped.groups[1]) is GroupItem
     assert round_tripped.groups[1].label == GroupLabel.UNSPECIFIED
+
+
+# ---------------------------------------------------------------------------
+# Wire schema extensions
+#
+# The proto mirrors the canonical wire schema, which carries an additive
+# extension set the Pydantic model has no slot for. Import absorbs those
+# fields: a document that uses every one of them still converts, and dumps a
+# document the dialect can express. The single active projection is the typed
+# picture `barcode` annotation, which lands in the picture meta as the
+# `pipestream__barcodes` custom field, byte for byte what the canonical
+# exporter derives from the same annotations.
+# ---------------------------------------------------------------------------
+
+# The exporter's projection of the two barcodes built below, as it emits it:
+# one object per annotation in annotation order, each with its keys in sorted
+# order (`format`, `provenance`, `value`).
+BARCODE_PROJECTION_JSON = (
+    '[{"format": "QRCode", "provenance": "zxing", '
+    '"value": "https://example.org/a"}, '
+    '{"format": "Code128", "provenance": "opencv", "value": "0123456789"}]'
+)
+
+
+def _picture_doc_with_barcodes(*, meta: pb2.PictureMeta = None) -> pb2.DoclingDocument:
+    doc_msg = pb2.DoclingDocument(
+        name="barcodes",
+        body=pb2.GroupItem(self_ref="#/body", children=[pb2.RefItem(ref="#/pictures/0")]),
+        furniture=pb2.GroupItem(self_ref="#/furniture"),
+    )
+    picture = doc_msg.pictures.add()
+    picture.self_ref = "#/pictures/0"
+    picture.parent.ref = "#/body"
+    picture.label = pb2.DOC_ITEM_LABEL_PICTURE
+    if meta is not None:
+        picture.meta.CopyFrom(meta)
+    picture.annotations.add().barcode.CopyFrom(
+        pb2.BarcodeAnnotation(
+            format="QRCode", value="https://example.org/a", provenance="zxing"
+        )
+    )
+    picture.annotations.add().barcode.CopyFrom(
+        pb2.BarcodeAnnotation(
+            format="Code128", value="0123456789", provenance="opencv"
+        )
+    )
+    return doc_msg
+
+
+def test_typed_barcodes_project_into_picture_meta():
+    import json
+
+    doc = proto_to_docling_document(_picture_doc_with_barcodes())
+    meta = doc.pictures[0].meta
+    assert meta is not None
+    payloads = meta.model_extra["pipestream__barcodes"]
+    # Key order is part of the contract, so compare the serialized fragment.
+    assert json.dumps(payloads) == BARCODE_PROJECTION_JSON
+
+    dumped = doc.export_to_dict()
+    assert json.dumps(dumped["pictures"][0]["meta"]["pipestream__barcodes"]) == (
+        BARCODE_PROJECTION_JSON
+    )
+    # A picture with no proto meta still gets one, carrying only the
+    # projection: the same shape the exporter emits for that input.
+    assert list(dumped["pictures"][0]["meta"]) == ["pipestream__barcodes"]
+    # The dump is still a document the dialect can load.
+    assert DoclingDocument.model_validate(dumped).export_to_dict() == dumped
+
+
+def test_typed_barcodes_do_not_override_a_meta_carried_field():
+    import json
+
+    meta = pb2.PictureMeta()
+    meta.custom_fields["pipestream__barcodes"].list_value.values.add().string_value = (
+        "producer wrote this"
+    )
+    meta.custom_fields["pipestream__alpha"].string_value = "first"
+    doc = proto_to_docling_document(_picture_doc_with_barcodes(meta=meta))
+
+    dumped_meta = doc.export_to_dict()["pictures"][0]["meta"]
+    assert dumped_meta["pipestream__barcodes"] == ["producer wrote this"]
+    # Custom fields dump in sorted key order either way.
+    assert list(dumped_meta) == ["pipestream__alpha", "pipestream__barcodes"]
+    assert json.dumps(dumped_meta["pipestream__barcodes"]) != BARCODE_PROJECTION_JSON
+
+
+def _every_extension_document() -> pb2.DoclingDocument:
+    """A proto document that sets every field the model has no slot for."""
+    from google.protobuf import timestamp_pb2
+
+    stamp = timestamp_pb2.Timestamp(seconds=1_700_000_000)
+
+    doc_msg = pb2.DoclingDocument(
+        name="extensions",
+        body=pb2.GroupItem(
+            self_ref="#/body",
+            children=[
+                pb2.RefItem(ref="#/texts/0"),
+                pb2.RefItem(ref="#/texts/1"),
+                pb2.RefItem(ref="#/tables/0"),
+                pb2.RefItem(ref="#/pictures/0"),
+                pb2.RefItem(ref="#/groups/0"),
+            ],
+        ),
+        furniture=pb2.GroupItem(self_ref="#/furniture"),
+        origin=pb2.DocumentOrigin(
+            mimetype="text/html",
+            binary_hash=7,
+            filename="page.html",
+            uri="https://example.org/page.html",
+            web=pb2.WebMeta(
+                target_uri="https://example.org/page.html",
+                canonical_uri="https://example.org/",
+                crawl_time=stamp,
+                crawl_time_raw="Tue, 14 Nov 2023 22:13:20 GMT",
+                http_status=200,
+                content_language="en",
+                headers={"content-type": "text/html"},
+            ),
+        ),
+        source_meta=pb2.DocumentMeta(
+            title="Extensions",
+            authors=["A. Author"],
+            created=stamp,
+            modified=stamp,
+            created_raw="2023-11-14T22:13:20Z",
+            modified_raw="2023-11-14T22:13:20Z",
+            language="en",
+            generator="grparse",
+            keywords=["wire", "schema"],
+            schema_location="https://example.org/schema.xsd",
+            extra={"department": "research"},
+        ),
+        attachments=[
+            pb2.SubDocumentRef(
+                id="part:1",
+                name="attachment.pdf",
+                media_type="application/pdf",
+                size_bytes=1024,
+                item_ref="#/texts/0",
+            )
+        ],
+        outline=[
+            pb2.OutlineEntry(
+                title="Chapter 1",
+                level=1,
+                page_no=1,
+                target=pb2.FineRef(ref="#/texts/0"),
+            )
+        ],
+        meta_tags=[pb2.MetaTag(name="description", content="a page")],
+        structured_data=[pb2.StructuredData(kind="json-ld", json='{"@type":"Article"}')],
+        media=pb2.MediaMeta(duration_ms=1200.0, speakers=["S1", "S2"], codec="opus"),
+        changes=[
+            pb2.ChangeRecord(
+                id="c1",
+                kind="insert",
+                author="editor",
+                timestamp=stamp,
+                timestamp_raw="2023-11-14T22:13:20Z",
+                target=pb2.FineRef(ref="#/texts/0", range=pb2.IntSpan(start=0, end=3)),
+                content="was",
+            )
+        ],
+        anchors=[pb2.NamedAnchor(name="top", target=pb2.FineRef(ref="#/texts/0"))],
+        email=pb2.EmailMeta(
+            **{
+                "from": [pb2.EmailParty(name="Sender", address="s@example.org")],
+                "to": [pb2.EmailParty(address="r@example.org")],
+                "cc": [pb2.EmailParty(address="c@example.org")],
+                "bcc": [pb2.EmailParty(address="b@example.org")],
+            },
+            message_id="<m1@example.org>",
+            in_reply_to=["<m0@example.org>"],
+            references=["<m0@example.org>"],
+            conversation_topic="Extensions",
+            conversation_index=b"\x01\x02",
+            sent=stamp,
+            sent_raw="Tue, 14 Nov 2023 22:13:20 GMT",
+        ),
+    )
+
+    # Every provenance arm on one item.
+    prov = pb2.ProvenanceItem(
+        page_no=1,
+        bbox=pb2.BoundingBox(l=0, t=0, r=10, b=10),
+        charspan=pb2.IntSpan(start=0, end=3),
+        time=pb2.TimeSpan(start_ms=0.0, end_ms=500.0, track=0, speaker="S1"),
+        byte_range=pb2.ByteSpan(start=0, end=64),
+        grid=pb2.GridCell(row=2, col=3, sheet="Sheet1"),
+        polygon=[
+            pb2.Point(x=0.0, y=0.0),
+            pb2.Point(x=10.0, y=0.0),
+            pb2.Point(x=10.0, y=10.0),
+        ],
+    )
+    span = pb2.InlineSpan(
+        range=pb2.IntSpan(start=0, end=3),
+        formatting=pb2.Formatting(bold=True),
+        hyperlink="https://example.org/",
+        target=pb2.FineRef(ref="#/texts/1"),
+        font_family="Helvetica",
+        font_size_pt=11.5,
+        color="#112233",
+        language="en",
+        field_code="PAGE",
+    )
+    collector = pb2.SourceType(
+        collector=pb2.CollectorSource(
+            collector="grparse",
+            model="poppler-text",
+            version="24.0",
+            confidence=0.9,
+            raw_score=-0.12,
+            raw_score_kind="avg_logprob",
+        )
+    )
+    generation = pb2.SourceType(
+        generation=pb2.GenerationSource(
+            model="a-model",
+            endpoint="https://example.org/v1",
+            finish_reason="length",
+            prompt_tokens=10,
+            completion_tokens=20,
+            temperature=0.2,
+        )
+    )
+
+    text = doc_msg.texts.add()
+    text.text.base.self_ref = "#/texts/0"
+    text.text.base.parent.ref = "#/body"
+    text.text.base.label = pb2.DOC_ITEM_LABEL_TEXT
+    text.text.base.orig = "abc"
+    text.text.base.text = "abc"
+    text.text.base.prov.append(prov)
+    text.text.base.spans.append(span)
+    text.text.base.admonition_kind = "warning"
+    text.text.base.label_raw = "future_label"
+    text.text.base.style_name = "Body Text"
+    text.text.base.source.extend([collector, generation])
+
+    code = doc_msg.texts.add()
+    code.code.self_ref = "#/texts/1"
+    code.code.parent.ref = "#/body"
+    code.code.label = pb2.DOC_ITEM_LABEL_CODE
+    code.code.orig = "x = 1"
+    code.code.text = "x = 1"
+    code.code.label_raw = "future_label"
+    code.code.source.append(collector)
+
+    table = doc_msg.tables.add()
+    table.self_ref = "#/tables/0"
+    table.parent.ref = "#/body"
+    table.label = pb2.DOC_ITEM_LABEL_TABLE
+    table.data.num_rows = 1
+    table.data.num_cols = 1
+    cell = table.data.table_cells.add()
+    cell.text = "2023-11-14"
+    cell.end_row_offset_idx = 1
+    cell.end_col_offset_idx = 1
+    cell.value.datetime.CopyFrom(
+        pb2.CivilDateTime(
+            year=2023, month=11, day=14, hour=22, minute=13, second=20, nanos=0
+        )
+    )
+    cell.value.number_format = "yyyy-mm-dd"
+    cell.spans.append(span)
+    table.data.columns.append(
+        pb2.TableColumnSchema(
+            name="WHEN",
+            declared_type="PIC X(10)",
+            picture="X(10)",
+            byte_offset=0,
+            byte_size=10,
+            level=5,
+            occurs_index=1,
+            width=64.0,
+            conditions=[
+                pb2.ValueCondition(
+                    name="VALID",
+                    values=[pb2.ValueRange(low="A", high="Z")],
+                )
+            ],
+        )
+    )
+    table.data.row_prov.append(prov)
+    table.data.record_layout.CopyFrom(
+        pb2.RecordLayoutMeta(
+            encoding="cp037",
+            record_length=80,
+            header_bytes=0,
+            footer_bytes=0,
+            prefix_bytes=4,
+            rows_truncated=0,
+        )
+    )
+
+    picture = doc_msg.pictures.add()
+    picture.self_ref = "#/pictures/0"
+    picture.parent.ref = "#/body"
+    picture.label = pb2.DOC_ITEM_LABEL_PICTURE
+    picture.annotations.add().barcode.CopyFrom(
+        pb2.BarcodeAnnotation(
+            format="QRCode", value="https://example.org/a", provenance="zxing"
+        )
+    )
+
+    group = doc_msg.groups.add()
+    group.self_ref = "#/groups/0"
+    group.parent.ref = "#/body"
+    group.name = "chapter"
+    group.label_raw = "future_group_label"
+
+    page = doc_msg.pages[1]
+    page.page_no = 1
+    page.size.width = 100.0
+    page.size.height = 200.0
+    page.unit = "pt"
+    page.quality.CopyFrom(
+        pb2.PageQuality(
+            garble_score=0.01,
+            replacement_runs=0,
+            ocr_recommended=False,
+            rotation_degrees=0.0,
+        )
+    )
+    return doc_msg
+
+
+# Extension field names that must never surface in a dialect dump. The
+# barcode projection is the one deliberate exception and is asserted
+# separately.
+_EXTENSION_KEYS = frozenset(
+    {
+        "source_meta",
+        "attachments",
+        "outline",
+        "meta_tags",
+        "structured_data",
+        "media",
+        "changes",
+        "anchors",
+        "email",
+        "web",
+        "time",
+        "byte_range",
+        "polygon",
+        "spans",
+        "admonition_kind",
+        "style_name",
+        "label_raw",
+        "columns",
+        "row_prov",
+        "record_layout",
+        "unit",
+        "quality",
+        "collector",
+        "generation",
+        "raw_score",
+        "raw_score_kind",
+        "number_format",
+        "barcode",
+    }
+)
+
+
+def _keys_in(node) -> set:
+    if isinstance(node, dict):
+        found = set(node)
+        for value in node.values():
+            found |= _keys_in(value)
+        return found
+    if isinstance(node, list):
+        found = set()
+        for item in node:
+            found |= _keys_in(item)
+        return found
+    return set()
+
+
+def test_every_extension_field_is_absorbed_on_import():
+    doc = proto_to_docling_document(_every_extension_document())
+    dumped = doc.export_to_dict()
+
+    # The absorbed extensions leave no trace, and the barcode projection is
+    # the only thing the import synthesizes.
+    leaked = _keys_in(dumped) & _EXTENSION_KEYS
+    assert leaked == set()
+    assert "pipestream__barcodes" in dumped["pictures"][0]["meta"]
+    # `value` and `grid` are dialect key names too, so the ambiguous pair is
+    # checked where the extensions would have landed.
+    cell = dumped["tables"][0]["data"]["table_cells"][0]
+    assert "value" not in cell
+    assert set(dumped["tables"][0]["data"]) == {
+        "table_cells",
+        "num_rows",
+        "num_cols",
+        "grid",
+        "orientation",
+    }
+    assert "grid" not in dumped["texts"][0]["prov"][0]
+
+    # What survives is a document the dialect can load and re-dump unchanged.
+    assert DoclingDocument.model_validate(dumped).export_to_dict() == dumped
+
+    # The model-side fields alongside the extensions still arrive.
+    assert doc.texts[0].text == "abc"
+    assert doc.texts[0].prov[0].bbox.r == 10
+    assert doc.texts[0].prov[0].charspan == (0, 3)
+    assert doc.texts[0].source == []
+    assert doc.texts[1].text == "x = 1"
+    assert doc.tables[0].data.table_cells[0].text == "2023-11-14"
+    assert doc.pages[1].size.width == 100.0
+    assert doc.groups[0].name == "chapter"
+
+
+def test_export_of_an_absorbed_document_stays_lossless_for_the_model():
+    """The forward direction never emits extensions and must not choke on a
+    document that came in carrying them."""
+    doc = proto_to_docling_document(_every_extension_document())
+    round_tripped = proto_to_docling_document(docling_document_to_proto(doc))
+    assert round_tripped.export_to_dict() == doc.export_to_dict()
