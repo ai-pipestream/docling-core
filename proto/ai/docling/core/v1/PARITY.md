@@ -97,17 +97,18 @@ members sitting next to it.
 
 | Message              | Extension fields                                                                     |
 | -------------------- | ------------------------------------------------------------------------------------ |
-| `DoclingDocument`    | `source_meta` (`DocumentMeta`), `attachments` (`SubDocumentRef`), `outline` (`OutlineEntry`), `meta_tags` (`MetaTag`), `structured_data` (`StructuredData`), `media` (`MediaMeta`), `changes` (`ChangeRecord`), `anchors` (`NamedAnchor`), `email` (`EmailMeta`), `page_styles` (`PageStyle`), `named_ranges` (`NamedRange`), `pivots` (`PivotSpec`) |
-| `DocumentOrigin`     | `web` (`WebMeta`), `source_id`                                                        |
-| `ProvenanceItem`     | `time` (`TimeSpan`), `byte_range` (`ByteSpan`), `grid` (`GridCell`), `polygon` (`Point`) |
-| `TextItemBase`       | `spans` (`InlineSpan`), `admonition_kind`, `label_raw`, `style_name`, `comment_meta` (`CommentMeta`), `shape` (`ShapeMeta`), `footnote_meta` (`FootnoteMeta`), `index_meta` (`IndexMeta`) |
+| `DoclingDocument`    | `source_meta` (`DocumentMeta`), `attachments` (`SubDocumentRef`), `outline` (`OutlineEntry`), `meta_tags` (`MetaTag`), `structured_data` (`StructuredData`), `media` (`MediaMeta`), `changes` (`ChangeRecord`), `anchors` (`NamedAnchor`), `email` (`EmailMeta`), `page_styles` (`PageStyle`), `named_ranges` (`NamedRange`), `pivots` (`PivotSpec`), `claims` (`CollectorClaim`) |
+| `DocumentOrigin`     | `web` (`WebMeta`), `source_id`, `mimetype_evidence`, `field_sources` (`FieldSource`)  |
+| `ProvenanceItem`     | `time` (`TimeSpan`), `byte_range` (`ByteSpan`), `grid` (`GridCell`), `polygon` (`Point`), `line_range` (`LineSpan`) |
+| `TextItemBase`       | `spans` (`InlineSpan`), `admonition_kind`, `label_raw`, `style_name`, `comment_meta` (`CommentMeta`), `shape` (`ShapeMeta`), `footnote_meta` (`FootnoteMeta`), `index_meta` (`IndexMeta`), `raw`, `source_element_name`, `source_namespace` |
 | `GroupItem`          | `label_raw`, `sheet` (`SheetMeta`)                                                    |
-| `CodeItem`           | `label_raw`                                                                           |
+| `CodeItem`           | `label_raw`, `source_element_name`, `source_namespace`                                |
 | `Formatting`         | `monospace`, `small_caps`, `math`, `mark`, `small`, `insertion`, `abbreviation`, `quote`, `overline` |
 | `TableCell`          | `value` (`CellValue`, with `CivilDateTime`), `spans` (`InlineSpan`), `align`, `valign` |
 | `TableData`          | `columns` (`TableColumnSchema`), `row_prov`, `record_layout` (`RecordLayoutMeta`)      |
 | `PageItem`           | `unit`, `quality` (`PageQuality`), `style_name`, `page_label`, `media_size`, `user_unit` |
-| `PictureItem`        | `shape` (`ShapeMeta`), `hyperlink`, `target`, `chart` (`ChartMeta`)                    |
+| `PictureItem`        | `shape` (`ShapeMeta`), `hyperlink`, `target`, `chart` (`ChartMeta`), `source_element_name`, `source_namespace` |
+| `ImageRef`           | `size_raw`                                                                            |
 | `PictureMeta`        | `accessibility_title`                                                                 |
 | `FieldItem`          | `field_name`, `options`, `selected_index`, `span`, `parameters`                        |
 | `SourceType`         | `collector` (`CollectorSource`), `generation` (`GenerationSource`)                     |
@@ -120,10 +121,11 @@ is mapped, so the converter never reaches them at all:
 
 `AlternativesMetaField`, `BarcodeAnnotation`, `ByteSpan`, `CellValue`,
 `ChangeRecord`, `ChartMeta`, `CivilDateTime`, `Classification`,
-`CollectorSource`, `CommentMeta`, `DocumentMeta`, `DocumentStatistics`,
-`EmailMeta`, `EmailParty`, `FootnoteMeta`, `FundingAward`, `GenerationSource`,
-`GridCell`, `GridSpan`, `Hypothesis`, `Identifier`, `IndexMeta`, `InlineSpan`,
-`LicenseMeta`, `Margins`, `MediaMeta`, `MetaTag`, `NamedAnchor`, `NamedRange`,
+`CollectorClaim`, `CollectorSource`, `CommentMeta`, `DocumentMeta`,
+`DocumentStatistics`, `EmailMeta`, `EmailParty`, `FieldSource`,
+`FootnoteMeta`, `FundingAward`, `GenerationSource`, `GridCell`, `GridSpan`,
+`Hypothesis`, `Identifier`, `IndexMeta`, `InlineSpan`, `LicenseMeta`,
+`LineSpan`, `Margins`, `MediaMeta`, `MetaTag`, `NamedAnchor`, `NamedRange`,
 `NamespaceBinding`, `OutlineEntry`, `PageQuality`, `PageStyle`, `PivotSpec`,
 `Point`, `Protection`, `RecordLayoutMeta`, `SchemaLocation`, `ShapeMeta`,
 `SheetMeta`, `StructuredData`, `SubDocumentRef`, `TableColumnSchema`,
@@ -245,8 +247,12 @@ custom field from the typed arm, which is what keeps them byte-equal.
     whole-document key scan cannot judge those), a picture
     carrying typed barcode annotations imports with the
     `pipestream__barcodes` projection fixtured as a JSON fragment so a change
-    in key order or key set fails, and descriptor-level tests pin the field
-    numbers and presence rules the canonical schema chose.
+    in key order or key set fails, descriptor-level tests pin the field
+    numbers and presence rules the canonical schema chose, and a descriptor
+    identity test pins the inventory (141 messages, 14 enums, 749 fields)
+    and, when `DOCLING_WIRE_SCHEMA_PROTO` points at the canonical
+    `document.proto`, compiles it and compares the two descriptors message
+    by message and field by field.
   - `docling-serve/tests/test_schema_validator.py`
 
 ## Developer Workflow
@@ -262,7 +268,10 @@ When changing the model or IDL:
 When the canonical wire schema grows a field, port it here with its number
 and name unchanged, regenerate, and verify the sync by comparing descriptors
 rather than by reading the diff: message set, field numbers, names, types,
-labels, oneof grouping and enum tags must match on both sides. Then decide
+labels, oneof grouping and enum tags must match on both sides. That is what
+`test_descriptor_is_identical_to_the_wire_schema` does when run with
+`DOCLING_WIRE_SCHEMA_PROTO=/path/to/document.proto`; bump the pinned
+inventory counts beside it in the same change. Then decide
 the converter's posture: absorbed (the default, and correct whenever the
 model has no slot), or projected (only when the canonical exporter projects
 it too, and then the projection must match byte for byte).

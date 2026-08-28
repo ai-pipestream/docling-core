@@ -1134,6 +1134,13 @@ def _every_extension_document() -> pb2.DoclingDocument:
             filename="page.html",
             uri="https://example.org/page.html",
             source_id="doc-42",
+            mimetype_evidence="sniffed-magic",
+            field_sources=[
+                pb2.FieldSource(
+                    field="web.canonical_uri",
+                    source=pb2.CollectorSource(collector="grparse"),
+                )
+            ],
             web=pb2.WebMeta(
                 target_uri="https://example.org/page.html",
                 canonical_uri="https://example.org/",
@@ -1230,6 +1237,12 @@ def _every_extension_document() -> pb2.DoclingDocument:
             ),
             raw_metadata=b"<x:xmpmeta/>",
             trapped=pb2.TRAPPED_UNKNOWN,
+            field_sources=[
+                pb2.FieldSource(
+                    field="title",
+                    source=pb2.CollectorSource(collector="libreoffice"),
+                )
+            ],
         ),
         attachments=[
             pb2.SubDocumentRef(
@@ -1317,6 +1330,22 @@ def _every_extension_document() -> pb2.DoclingDocument:
                 page_fields=["year"],
             )
         ],
+        claims=[
+            pb2.CollectorClaim(
+                source=pb2.CollectorSource(collector="libreoffice", version="24.2"),
+                source_meta=pb2.DocumentMeta(title="Extensions (lost)"),
+                origin=pb2.DocumentOrigin(
+                    mimetype="application/pdf",
+                    binary_hash=8,
+                    filename="page.pdf",
+                ),
+                page_styles=[
+                    pb2.PageStyle(name="Lost", size=pb2.Size(width=1.0, height=1.0))
+                ],
+                email=pb2.EmailMeta(message_id="<m2@example.org>"),
+                media=pb2.MediaMeta(codec="aac"),
+            )
+        ],
     )
 
     # Every provenance arm on one item.
@@ -1332,6 +1361,7 @@ def _every_extension_document() -> pb2.DoclingDocument:
             pb2.Point(x=10.0, y=0.0),
             pb2.Point(x=10.0, y=10.0),
         ],
+        line_range=pb2.LineSpan(start=1, end=3),
     )
     span = pb2.InlineSpan(
         range=pb2.IntSpan(start=0, end=3),
@@ -1360,6 +1390,7 @@ def _every_extension_document() -> pb2.DoclingDocument:
         raw="<a href=...>",
         style_name="Emphasis",
         highlight_color="#ffff00",
+        annotation="ruby",
     )
     collector = pb2.SourceType(
         collector=pb2.CollectorSource(
@@ -1406,6 +1437,9 @@ def _every_extension_document() -> pb2.DoclingDocument:
     text.text.base.admonition_kind = "warning"
     text.text.base.label_raw = "future_label"
     text.text.base.style_name = "Body Text"
+    text.text.base.raw = "<p>abc</p>"
+    text.text.base.source_element_name = "p"
+    text.text.base.source_namespace = "http://www.w3.org/1999/xhtml"
     text.text.base.source.extend([collector, generation])
     # The absorbed meta arm sits next to a mapped one, so the test pins that
     # absorbing it leaves the rest of the meta intact.
@@ -1449,6 +1483,8 @@ def _every_extension_document() -> pb2.DoclingDocument:
     code.code.orig = "x = 1"
     code.code.text = "x = 1"
     code.code.label_raw = "future_label"
+    code.code.source_element_name = "pre"
+    code.code.source_namespace = "http://www.w3.org/1999/xhtml"
     code.code.source.append(collector)
 
     table = doc_msg.tables.add()
@@ -1531,6 +1567,17 @@ def _every_extension_document() -> pb2.DoclingDocument:
     picture.annotations.add().barcode.CopyFrom(
         pb2.BarcodeAnnotation(
             format="QRCode", value="https://example.org/a", provenance="zxing"
+        )
+    )
+    picture.source_element_name = "img"
+    picture.source_namespace = "http://www.w3.org/1999/xhtml"
+    picture.image.CopyFrom(
+        pb2.ImageRef(
+            mimetype="image/png",
+            dpi=72,
+            size=pb2.Size(width=1.0, height=1.0),
+            uri=_PNG_DATA_URI,
+            size_raw="50%",
         )
     )
 
@@ -1682,6 +1729,15 @@ _EXTENSION_KEYS = frozenset(
         "options",
         "selected_index",
         "parameters",
+        # Collector claims and source identity block.
+        "claims",
+        "field_sources",
+        "mimetype_evidence",
+        "line_range",
+        "size_raw",
+        "annotation",
+        "source_element_name",
+        "source_namespace",
     }
 )
 
@@ -1750,6 +1806,12 @@ def test_every_extension_field_is_absorbed_on_import():
     assert doc.tables[0].data.table_cells[0].text == "2023-11-14"
     assert doc.pages[1].size.width == 100.0
     assert doc.groups[0].name == "chapter"
+    # Absorbing the image's size_raw leaves the mapped image intact, and the
+    # resolved origin wins over the claim that lost.
+    assert doc.pictures[0].image is not None
+    assert doc.pictures[0].image.size.width == 1.0
+    assert doc.origin is not None
+    assert doc.origin.mimetype == "text/html"
 
 
 def test_export_of_an_absorbed_document_stays_lossless_for_the_model():
@@ -1800,3 +1862,285 @@ def test_collector_source_carries_the_score_sample_count():
     assert field.number == 7
     assert field.type == field.TYPE_UINT64
     assert field.has_presence
+
+
+def _claimed_document() -> pb2.DoclingDocument:
+    """A document whose two collectors disagreed on the title and the mimetype.
+
+    The resolved view carries the winners and names them in `field_sources`;
+    the loser keeps its whole account under `claims`.
+    """
+    grparse = pb2.CollectorSource(collector="grparse", version="1.4")
+    libreoffice = pb2.CollectorSource(collector="libreoffice", version="24.2")
+    return pb2.DoclingDocument(
+        name="claimed",
+        body=pb2.GroupItem(self_ref="#/body"),
+        furniture=pb2.GroupItem(self_ref="#/furniture"),
+        origin=pb2.DocumentOrigin(
+            mimetype="application/vnd.oasis.opendocument.text",
+            binary_hash=11,
+            filename="letter.odt",
+            mimetype_evidence="sniffed-magic",
+            field_sources=[pb2.FieldSource(field="mimetype", source=libreoffice)],
+        ),
+        source_meta=pb2.DocumentMeta(
+            title="Letter",
+            field_sources=[
+                pb2.FieldSource(field="title", source=libreoffice),
+                pb2.FieldSource(field="generator", source=grparse),
+            ],
+        ),
+        claims=[
+            pb2.CollectorClaim(
+                source=grparse,
+                source_meta=pb2.DocumentMeta(title="letter.odt"),
+                origin=pb2.DocumentOrigin(
+                    mimetype="application/zip",
+                    binary_hash=11,
+                    filename="letter.odt",
+                    mimetype_evidence="extension",
+                ),
+            ),
+            pb2.CollectorClaim(
+                source=libreoffice,
+                source_meta=pb2.DocumentMeta(title="Letter"),
+                page_styles=[
+                    pb2.PageStyle(
+                        name="Standard", size=pb2.Size(width=595.0, height=842.0)
+                    )
+                ],
+                email=pb2.EmailMeta(message_id="<m1@example.org>"),
+                media=pb2.MediaMeta(codec="aac"),
+            ),
+        ],
+    )
+
+
+def test_collector_claims_and_field_sources_round_trip():
+    """Claims and field sources are absorbed on import; the resolved view
+    they annotate survives untouched and re-exports losslessly."""
+    doc = proto_to_docling_document(_claimed_document())
+    dumped = doc.export_to_dict()
+
+    assert "claims" not in dumped
+    assert "source_meta" not in dumped
+    assert "field_sources" not in dumped["origin"]
+    assert "mimetype_evidence" not in dumped["origin"]
+    assert _keys_in(dumped) & {"claims", "field_sources", "mimetype_evidence"} == set()
+
+    # The resolved view wins, not the claim that lost the resolution.
+    assert doc.origin is not None
+    assert doc.origin.mimetype == "application/vnd.oasis.opendocument.text"
+    assert doc.origin.binary_hash == 11
+    assert doc.origin.filename == "letter.odt"
+
+    # The dialect loads and re-dumps what survives unchanged, and a second
+    # trip through the wire changes nothing.
+    assert DoclingDocument.model_validate(dumped).export_to_dict() == dumped
+    exported = docling_document_to_proto(doc)
+    assert list(exported.claims) == []
+    assert list(exported.origin.field_sources) == []
+    assert not exported.origin.HasField("mimetype_evidence")
+    assert proto_to_docling_document(exported).export_to_dict() == dumped
+
+
+def test_collector_claim_and_field_source_numbers_match_the_wire_schema():
+    """The claim block hangs off the document and both metadata messages at
+    the numbers the wire schema gave it."""
+    for message_name, field_name, number, type_name in (
+        ("DoclingDocument", "claims", 28, "CollectorClaim"),
+        ("DocumentOrigin", "field_sources", 8, "FieldSource"),
+        ("DocumentMeta", "field_sources", 35, "FieldSource"),
+    ):
+        descriptor = pb2.DESCRIPTOR.message_types_by_name[message_name]
+        field = descriptor.fields_by_name[field_name]
+        assert field.number == number
+        assert field.is_repeated
+        assert field.message_type.name == type_name
+
+    field_source = pb2.DESCRIPTOR.message_types_by_name["FieldSource"]
+    assert [(f.name, f.number) for f in field_source.fields] == [
+        ("field", 1),
+        ("source", 2),
+    ]
+    assert field_source.fields_by_name["source"].message_type.name == (
+        "CollectorSource"
+    )
+
+    claim = pb2.DESCRIPTOR.message_types_by_name["CollectorClaim"]
+    assert [
+        (f.name, f.number, f.message_type.name, f.has_presence)
+        for f in claim.fields
+    ] == [
+        ("source", 1, "CollectorSource", True),
+        ("source_meta", 2, "DocumentMeta", True),
+        ("origin", 3, "DocumentOrigin", True),
+        ("page_styles", 4, "PageStyle", False),
+        ("email", 5, "EmailMeta", True),
+        ("media", 6, "MediaMeta", True),
+    ]
+
+
+def test_source_identity_and_line_range_numbers_match_the_wire_schema():
+    """The source element identity mirrors across the three item kinds that
+    carry it, and the line-addressed provenance arm sits at its number."""
+    for message_name, first in (
+        ("TextItemBase", 23),
+        ("CodeItem", 21),
+        ("PictureItem", 20),
+    ):
+        descriptor = pb2.DESCRIPTOR.message_types_by_name[message_name]
+        assert descriptor.fields_by_name["source_element_name"].number == first
+        assert descriptor.fields_by_name["source_namespace"].number == first + 1
+    text_base = pb2.DESCRIPTOR.message_types_by_name["TextItemBase"]
+    assert text_base.fields_by_name["raw"].number == 22
+    prov = pb2.DESCRIPTOR.message_types_by_name["ProvenanceItem"]
+    line_range = prov.fields_by_name["line_range"]
+    assert line_range.number == 8
+    assert line_range.message_type.name == "LineSpan"
+    line_span = pb2.DESCRIPTOR.message_types_by_name["LineSpan"]
+    assert [(f.name, f.number, f.type) for f in line_span.fields] == [
+        ("start", 1, line_span.fields[0].TYPE_UINT32),
+        ("end", 2, line_span.fields[1].TYPE_UINT32),
+    ]
+    image_ref = pb2.DESCRIPTOR.message_types_by_name["ImageRef"]
+    assert image_ref.fields_by_name["size_raw"].number == 5
+    inline_span = pb2.DESCRIPTOR.message_types_by_name["InlineSpan"]
+    assert inline_span.fields_by_name["annotation"].number == 16
+    origin = pb2.DESCRIPTOR.message_types_by_name["DocumentOrigin"]
+    assert origin.fields_by_name["mimetype_evidence"].number == 7
+
+
+# ---------------------------------------------------------------------------
+# Descriptor identity with the canonical wire schema.
+#
+# The vendored proto mirrors the canonical schema field for field. Four
+# things differ by design (package, file path, Java options, root message
+# name) and nothing else, so the sync is verified by comparing descriptors
+# rather than by reading the diff.
+# ---------------------------------------------------------------------------
+
+# The fork's descriptor inventory, counted the way `_flatten_file` counts:
+# map entry messages and their key/value fields included.
+_WIRE_SCHEMA_MESSAGES = 141
+_WIRE_SCHEMA_ENUMS = 14
+_WIRE_SCHEMA_FIELDS = 749
+
+# The root message is the one deliberate rename.
+_ROOT_MESSAGE_RENAMES = {"Document": "DoclingDocument"}
+
+
+def _flatten_file(file_proto, renames):
+    """Reduce a FileDescriptorProto to comparable message, enum and field maps.
+
+    Message and enum names are qualified by nesting, never by package, so
+    the two files compare across their package difference. Field values
+    carry everything that decides wire compatibility: number, label, type,
+    the type name of message and enum fields, the oneof (if any) and whether
+    the field is proto3 optional.
+    """
+
+    def local(type_name):
+        name = type_name.rsplit(".", 1)[-1] if type_name else ""
+        return renames.get(name, name)
+
+    messages, enums, fields = {}, {}, {}
+
+    def walk(message, prefix):
+        name = prefix + renames.get(message.name, message.name)
+        messages[name] = [o.name for o in message.oneof_decl]
+        for field in message.field:
+            oneof = (
+                message.oneof_decl[field.oneof_index].name
+                if field.HasField("oneof_index")
+                else None
+            )
+            fields[f"{name}.{field.name}"] = (
+                field.number,
+                field.label,
+                field.type,
+                local(field.type_name),
+                oneof,
+                field.proto3_optional,
+            )
+        for enum in message.enum_type:
+            enums[f"{name}.{enum.name}"] = [(v.name, v.number) for v in enum.value]
+        for nested in message.nested_type:
+            walk(nested, name + ".")
+
+    for message in file_proto.message_type:
+        walk(message, "")
+    for enum in file_proto.enum_type:
+        enums[enum.name] = [(v.name, v.number) for v in enum.value]
+    return messages, enums, fields
+
+
+def _fork_file_proto():
+    from google.protobuf import descriptor_pb2
+
+    return descriptor_pb2.FileDescriptorProto.FromString(pb2.DESCRIPTOR.serialized_pb)
+
+
+def test_descriptor_inventory_is_pinned():
+    """The counts move only when the canonical schema does; a change here
+    without a matching canonical change is a drift, not a feature."""
+    messages, enums, fields = _flatten_file(_fork_file_proto(), {})
+    assert (len(messages), len(enums), len(fields)) == (
+        _WIRE_SCHEMA_MESSAGES,
+        _WIRE_SCHEMA_ENUMS,
+        _WIRE_SCHEMA_FIELDS,
+    )
+
+
+def test_descriptor_is_identical_to_the_wire_schema():
+    """Compile the canonical schema and compare descriptors: every message,
+    enum, field number, name, type, label and oneof grouping must match.
+
+    Set DOCLING_WIRE_SCHEMA_PROTO to the canonical `document.proto`; the test
+    skips when it is unset, since the canonical file lives outside this
+    repository.
+    """
+    import os
+    import pathlib
+    import subprocess
+    import sys
+    import tempfile
+
+    from google.protobuf import descriptor_pb2
+
+    location = os.environ.get("DOCLING_WIRE_SCHEMA_PROTO")
+    if not location:
+        pytest.skip("DOCLING_WIRE_SCHEMA_PROTO is unset")
+    pytest.importorskip("grpc_tools")
+    canonical = pathlib.Path(location)
+    assert canonical.is_file(), canonical
+
+    with tempfile.TemporaryDirectory() as tmp:
+        out = pathlib.Path(tmp) / "canonical.pb"
+        subprocess.check_call(
+            [
+                sys.executable,
+                "-m",
+                "grpc_tools.protoc",
+                f"-I{canonical.parent}",
+                f"--descriptor_set_out={out}",
+                str(canonical),
+            ]
+        )
+        file_set = descriptor_pb2.FileDescriptorSet.FromString(out.read_bytes())
+    (canonical_proto,) = [f for f in file_set.file if f.name == canonical.name]
+
+    theirs = _flatten_file(canonical_proto, _ROOT_MESSAGE_RENAMES)
+    ours = _flatten_file(_fork_file_proto(), {})
+    for label, a, b in zip(("messages", "enums", "fields"), theirs, ours):
+        assert set(a) == set(b), (
+            label,
+            sorted(set(a) - set(b)),
+            sorted(set(b) - set(a)),
+        )
+        assert a == b, [(k, a[k], b[k]) for k in sorted(a) if a[k] != b[k]]
+    assert tuple(len(part) for part in ours) == (
+        _WIRE_SCHEMA_MESSAGES,
+        _WIRE_SCHEMA_ENUMS,
+        _WIRE_SCHEMA_FIELDS,
+    )
