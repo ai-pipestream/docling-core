@@ -3565,8 +3565,28 @@ class DoclingDocument(BaseModel):
         indent: int = 2,
         coord_precision: Optional[int] = None,
         confid_precision: Optional[int] = None,
-    ):
-        """Save as json."""
+        *,
+        ensure_ascii: bool = True,
+        sort_keys: bool = False,
+    ) -> None:
+        """Save the document to a JSON file.
+
+        Args:
+            filename: Output file path.
+            artifacts_dir: Directory for referenced image artifacts. Defaults to a
+                subdirectory next to `filename`.
+            image_mode: How to handle embedded images.
+            indent: Indentation level passed to `json.dumps`.
+            coord_precision: Decimal precision for bounding-box coordinates. If
+                `None`, full precision is used.
+            confid_precision: Decimal precision for confidence scores. If `None`,
+                full precision is used.
+            ensure_ascii: When `True` (the default), non-ASCII characters are
+                escaped as `\\uXXXX` sequences. Set to `False` to write literal
+                Unicode characters.
+            sort_keys: When `True`, object keys are sorted alphabetically,
+                producing deterministic output suitable for diffing.
+        """
         if isinstance(filename, str):
             filename = Path(filename)
         artifacts_dir, reference_path = self._get_output_paths(filename, artifacts_dir)
@@ -3583,7 +3603,10 @@ class DoclingDocument(BaseModel):
         )
 
         out = new_doc.export_to_dict(coord_precision=coord_precision, confid_precision=confid_precision)
-        filename.write_text(json.dumps(out, indent=indent), encoding="utf-8")
+        filename.write_text(
+            json.dumps(out, indent=indent, ensure_ascii=ensure_ascii, sort_keys=sort_keys),
+            encoding="utf-8",
+        )
 
     @classmethod
     def load_from_json(cls, filename: Union[str, Path]) -> "DoclingDocument":
@@ -4841,24 +4864,34 @@ class DoclingDocument(BaseModel):
 
     def export_to_doclang(
         self,
+        *,
+        add_named_groups: bool = False,
     ) -> str:
-        """Export to DocLang."""
+        """Export to DocLang.
+
+        Args:
+            add_named_groups: When True, a plain ``GroupItem`` is emitted as a
+                ``<group name="...">`` element instead of being transparent, so
+                the grouping survives a round trip.
+        """
         from docling_core.transforms.serializer.doclang import DocLangDocSerializer, DocLangParams
 
         serializer = DocLangDocSerializer(
             doc=self,
-            params=DocLangParams(),
+            params=DocLangParams(add_named_groups=add_named_groups),
         )
         return serializer.serialize().text
 
     def save_as_doclang(
         self,
         filename: Union[str, Path],
+        *,
+        add_named_groups: bool = False,
     ) -> None:
         """Save the document as DocLang."""
         if isinstance(filename, str):
             filename = Path(filename)
-        out = self.export_to_doclang()
+        out = self.export_to_doclang(add_named_groups=add_named_groups)
         filename.write_text(f"{out}\n", encoding="utf-8")
 
     def save_as_doclang_archive(
@@ -4867,11 +4900,15 @@ class DoclingDocument(BaseModel):
         *,
         artifacts_dir: Optional[Path] = None,
         validate: bool = False,
+        add_named_groups: bool = False,
     ) -> None:
         """Save the document as a DocLang OPC archive (``.dclx``).
 
         Picture and page images are always stored outside the markup, under
         ``assets/`` and ``pages/`` in the archive respectively.
+
+        ``add_named_groups`` emits plain ``GroupItem``s as ``<group name="...">``
+        elements so the grouping survives a round trip.
         """
         from doclang import pack
 
@@ -4893,7 +4930,10 @@ class DoclingDocument(BaseModel):
 
             serializer = DocLangDocSerializer(
                 doc=doc,
-                params=DocLangParams(image_mode=ImageRefMode.REFERENCED),
+                params=DocLangParams(
+                    image_mode=ImageRefMode.REFERENCED,
+                    add_named_groups=add_named_groups,
+                ),
             )
             document_path = staging_root / "document.dclg.xml"
             document_path.write_text(f"{serializer.serialize().text}\n", encoding="utf-8")
