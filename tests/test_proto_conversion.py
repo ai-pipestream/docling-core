@@ -91,6 +91,30 @@ def test_document_origin_binary_hash_uses_uint64_proto_field():
     assert proto.origin.binary_hash == 18446744073709551615
 
 
+@pytest.mark.parametrize(
+    "mimetype,filename",
+    [
+        ("audio/m4a", "clip.m4a"),
+        ("audio/mp4", "clip.mp4"),
+    ],
+)
+def test_document_origin_accepts_audio_m4a_and_mp4_mimetypes(mimetype, filename):
+    """Origin.mimetype is a proto string; #789 only expands the Pydantic allowlist."""
+    doc = DoclingDocument(
+        name="audio_clip",
+        origin=DocumentOrigin(
+            mimetype=mimetype,
+            binary_hash=1,
+            filename=filename,
+        ),
+    )
+    proto = docling_document_to_proto(doc)
+    assert proto.origin.mimetype == mimetype
+    round_trip = conversion.proto_to_docling_document(proto)
+    assert round_trip.origin is not None
+    assert round_trip.origin.mimetype == mimetype
+
+
 def test_picture_meta_code_field_round_trip():
     from docling_core.types.doc.document import CodeMetaField, PictureMeta
     from docling_core.types.doc.labels import CodeLanguageLabel
