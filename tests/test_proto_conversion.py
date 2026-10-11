@@ -96,12 +96,13 @@ def test_document_origin_binary_hash_uses_uint64_proto_field():
     [
         ("audio/m4a", "clip.m4a"),
         ("audio/mp4", "clip.mp4"),
+        ("application/rtf", "note.rtf"),
     ],
 )
-def test_document_origin_accepts_audio_m4a_and_mp4_mimetypes(mimetype, filename):
-    """Origin.mimetype is a proto string; #789 only expands the Pydantic allowlist."""
+def test_document_origin_accepts_allowlisted_mimetypes(mimetype, filename):
+    """Origin.mimetype is a proto string; allowlist expands do not need new wire fields."""
     doc = DoclingDocument(
-        name="audio_clip",
+        name="origin_mime",
         origin=DocumentOrigin(
             mimetype=mimetype,
             binary_hash=1,
