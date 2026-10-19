@@ -97,6 +97,13 @@ def test_document_origin_binary_hash_uses_uint64_proto_field():
         ("audio/m4a", "clip.m4a"),
         ("audio/mp4", "clip.mp4"),
         ("application/rtf", "note.rtf"),
+        # 2.102/2.103 allowlist additions (#892, #898, #891).
+        ("text/calendar", "invite.ics"),
+        ("text/x-vcalendar", "invite.vcs"),
+        ("application/calendar+json", "invite.jcal"),
+        ("application/calendar+xml", "invite.xcal"),
+        ("application/vnd.cv+pdf", "resume.cv"),
+        ("application/zip", "bundle.zip"),
     ],
 )
 def test_document_origin_accepts_allowlisted_mimetypes(mimetype, filename):
@@ -2169,3 +2176,60 @@ def test_descriptor_is_identical_to_the_wire_schema():
         _WIRE_SCHEMA_ENUMS,
         _WIRE_SCHEMA_FIELDS,
     )
+
+
+# ---------------------------------------------------------------------------
+# Local image references (upstream #900, allow_image_file_uri gate)
+# ---------------------------------------------------------------------------
+# ImageRef.uri is a proto string. The converter carries file:// URIs and
+# filesystem paths as the original string and never opens them, so the
+# settings.allow_image_file_uri gate stays the only way to read local pixels.
+
+
+def _png_on_disk(tmp_path):
+    from PIL import Image as PILImageModule
+
+    path = tmp_path / "local.png"
+    PILImageModule.new("RGB", (2, 3), color=(10, 20, 30)).save(path)
+    return path
+
+
+@pytest.mark.parametrize("as_file_uri", [True, False])
+def test_local_image_reference_round_trips_without_reading_the_file(tmp_path, as_file_uri):
+    from docling_core.types.doc.base import Size
+    from docling_core.types.doc.document import ImageRef
+
+    path = _png_on_disk(tmp_path)
+    uri = path.as_uri() if as_file_uri else path
+    doc = DoclingDocument(name="local_image")
+    doc.add_picture(image=ImageRef(mimetype="image/png", dpi=72, size=Size(width=2, height=3), uri=uri))
+
+    proto = docling_document_to_proto(doc)
+    assert proto.pictures[0].image.uri == str(uri)
+    assert doc.pictures[0].image._pil is None, "to_proto must not open the local file"
+
+    round_trip = conversion.proto_to_docling_document(proto)
+    image = round_trip.pictures[0].image
+    assert image is not None
+    assert image._pil is None, "from_proto must not open the local file"
+    assert str(image.uri) == str(uri)
+    assert image._local_path() == path
+
+
+def test_local_image_from_proto_stays_behind_the_settings_gate(tmp_path, monkeypatch):
+    """A decoded proto document reads local pixels only through the upstream opt-ins."""
+    from docling_core.types.doc.base import Size
+    from docling_core.types.doc.document import ImageRef
+    from docling_core.utils.settings import settings
+
+    monkeypatch.setattr(settings, "allow_image_file_uri", False)
+    path = _png_on_disk(tmp_path)
+    doc = DoclingDocument(name="gated")
+    doc.add_picture(image=ImageRef(mimetype="image/png", dpi=72, size=Size(width=2, height=3), uri=path.as_uri()))
+
+    round_trip = conversion.proto_to_docling_document(docling_document_to_proto(doc))
+    with pytest.raises(ValueError, match="not enabled"):
+        _ = round_trip.pictures[0].image.pil_image
+
+    round_trip.load_local_images()
+    assert round_trip.pictures[0].image.pil_image.size == (2, 3)
