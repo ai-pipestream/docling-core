@@ -35,7 +35,7 @@ from docling_core.transforms.serializer.common import (
     _PageBreakSerResult,
     _should_use_legacy_annotations,
     create_ser_result,
-    hyperlink_uri,
+    markdown_link_destination,
 )
 from docling_core.types.doc import (
     BaseMeta,
@@ -81,6 +81,9 @@ from docling_core.types.doc import (
 )
 
 _logger = logging.getLogger(__name__)
+
+MARKDOWN_SEPARATOR_ROW_RE: re.Pattern[str] = re.compile(r"^\|(\s*:?-+:?\s*\|)+\s*$")
+"""Matches a Markdown table separator row, e.g. ``| - | :---: | --: |``."""
 
 
 def _cell_content_has_table(item: NodeItem, doc: DoclingDocument) -> bool:
@@ -183,9 +186,16 @@ def _collect_subtree_text(item: NodeItem, doc: DoclingDocument, excluded_refs: s
     if isinstance(item, TableItem):
         if item.self_ref in excluded_refs:
             return ""
+        # `grid` repeats a spanning cell in every slot it covers; flatten each rich cell only once,
+        # since its subtree would otherwise be walked once per slot (exponential for nested tables).
+        seen_rich_origins: set[tuple[int, int]] = set()
         for row in item.data.grid:
             for cell in row:
                 if isinstance(cell, RichTableCell):
+                    origin = (cell.start_row_offset_idx, cell.start_col_offset_idx)
+                    if origin in seen_rich_origins:
+                        continue
+                    seen_rich_origins.add(origin)
                     cell_text = _collect_subtree_text(cell.ref.resolve(doc), doc, excluded_refs)
                 else:
                     cell_text = cell.text
@@ -204,6 +214,24 @@ def _collect_subtree_text(item: NodeItem, doc: DoclingDocument, excluded_refs: s
                 parts.append(child_text)
 
     return " ".join(parts)
+
+
+def _longest_backtick_run(text: str) -> int:
+    """Return the length of the longest consecutive backtick sequence in text."""
+    return max((len(m) for m in re.findall(r"`+", text)), default=0)
+
+
+def _code_span(text: str) -> str:
+    """Wrap text in a code span whose delimiter no backtick run inside can close."""
+    ticks = "`" * (_longest_backtick_run(text) + 1)
+    pad = " " if text.startswith("`") or text.endswith("`") else ""
+    return f"{ticks}{pad}{text}{pad}{ticks}"
+
+
+def _code_block(text: str) -> str:
+    """Wrap text in a fenced code block whose fence is longer than any backtick run inside."""
+    fence = "`" * max(3, _longest_backtick_run(text) + 1)
+    return f"{fence}\n{text}\n{fence}"
 
 
 class OrigListItemMarkerMode(str, Enum):
@@ -229,8 +257,8 @@ class MarkdownParams(CommonParams):
     mark_meta: bool = Field(default=False, description="Mark meta sections.")
     include_annotations: bool = Field(
         default=True,
-        description="Include item annotations.",
-        deprecated="Use include_meta instead.",
+        description="Include legacy annotations. Has no effect on meta-based output.",
+        deprecated="Setting this to False only suppresses legacy `annotations`; use `blocked_meta_names` to suppress specific meta fields.",
     )
     mark_annotations: bool = Field(
         default=False,
@@ -241,7 +269,7 @@ class MarkdownParams(CommonParams):
     ensure_valid_list_item_marker: bool = True
     format_code_blocks: bool = Field(
         default=True,
-        description="Whether to wrap code items in markdown code block formatting (```). ",
+        description="Whether to wrap code items in markdown code formatting (e.g. backticks).",
     )
     compact_tables: Annotated[
         bool,
@@ -414,9 +442,9 @@ class MarkdownTextSerializer(BaseModel, BaseTextSerializer):
                 text_part = self._format_heading(text, item, in_table_cell=in_table_cell)
         elif isinstance(item, CodeItem):
             if params.format_code_blocks:
-                # inline items and all hyperlinks: use single backticks
+                # inline items and all hyperlinks: format as code span
                 bt = is_inline_scope or (params.include_hyperlinks and item.hyperlink)
-                text_part = f"`{text}`" if bt else f"```\n{text}\n```"
+                text_part = _code_span(text) if bt else _code_block(text)
             else:
                 text_part = text
             escape_html = False
@@ -442,6 +470,9 @@ class MarkdownTextSerializer(BaseModel, BaseTextSerializer):
             res_parts.append(text_res)
 
         if isinstance(item, FloatingItem):
+            ftn_res = doc_serializer.serialize_footnotes(item=item, **kwargs)
+            if ftn_res.text:
+                res_parts.append(ftn_res)
             cap_res = doc_serializer.serialize_captions(item=item, **kwargs)
             if cap_res.text:
                 if _caption_goes_after(item, doc, params, standard_after=True):
@@ -468,7 +499,9 @@ class MarkdownTextSerializer(BaseModel, BaseTextSerializer):
     ) -> str:
         """Format a heading or title item as a Markdown heading string.
 
-        Override this method to customize heading representation in subclasses.
+        The number of ``#`` markers is capped at 6, the deepest level Markdown
+        supports. Override this method to customize heading representation in
+        subclasses.
 
         Args:
             text: The heading text content, already post-processed.
@@ -483,7 +516,7 @@ class MarkdownTextSerializer(BaseModel, BaseTextSerializer):
         """
         if in_table_cell:
             return text
-        num_hashes = 1 if isinstance(item, TitleItem) else item.level + 1
+        num_hashes = 1 if isinstance(item, TitleItem) else min(item.level + 1, 6)
         return f"{num_hashes * '#'} {text}"
 
 
@@ -603,18 +636,9 @@ class MarkdownAnnotationSerializer(BaseModel, BaseAnnotationSerializer):
 
 
 def _count_header_rows(item: TableItem) -> int:
-    """Count the leading grid rows on which a column header cell starts.
+    """Count the leading grid rows that form the Markdown column header.
 
-    A header cell spanning several rows is repeated into each row it covers by
-    ``TableData.grid``, so a row is only counted when a header cell actually
-    starts on it. Counting every row that merely holds a flagged cell would
-    pull the data rows beneath a vertically spanning header into the header
-    block.
-
-    A row is only promoted when it carries no non-flagged text outside the
-    leading column. Text in the leading column is exempt, because that column
-    holds the row labels, which stay unmarked even on rows that belong to the
-    header.
+    The header block is determined by ``TableData._count_column_header_rows``.
 
     Args:
         item: The table whose header rows are to be counted.
@@ -630,20 +654,10 @@ def _count_header_rows(item: TableItem) -> int:
           (i.e. the flags begin on a later row).  The caller treats this as
           "no promotable header block", and every row stays in the body.
     """
-    num_headers = 0
-    first_col = min((cell.start_col_offset_idx for cell in item.data.table_cells), default=0)
-    for row_idx, row in enumerate(item.data.grid):
-        starting_cells = [cell for cell in row if cell.start_row_offset_idx == row_idx]
-        carries_body_text = any(
-            not cell.column_header and cell.text.strip() and cell.start_col_offset_idx != first_col
-            for cell in starting_cells
-        )
-        if any(cell.column_header for cell in starting_cells) and not carries_body_text:
-            num_headers += 1
-        else:
-            if row_idx == 0 and not any(cell.column_header for later_row in item.data.grid[1:] for cell in later_row):
-                return 1
-            break
+    grid = item.data.grid
+    num_headers = item.data._count_column_header_rows(grid=grid)
+    if num_headers == 0 and grid and not any(cell.column_header for row in grid[1:] for cell in row):
+        return 1
     return num_headers
 
 
@@ -706,9 +720,6 @@ class MarkdownTableSerializer(BaseTableSerializer):
       becomes ``native backend - TTS``
     """
 
-    _SEPARATOR_ROW_RE: re.Pattern = re.compile(r"^\|(\s*:?-+:?\s*\|)+\s*$")
-    """Matches a Markdown table separator row, e.g. ``| - | :---: | --: |``."""
-
     @override
     def get_header_and_body_lines(
         self,
@@ -735,7 +746,7 @@ class MarkdownTableSerializer(BaseTableSerializer):
             remaining data rows.
         """
         all_lines = table_text.splitlines(True)
-        sep_idx = next((i for i, l in enumerate(all_lines) if self._SEPARATOR_ROW_RE.match(l.rstrip("\n"))), None)
+        sep_idx = next((i for i, l in enumerate(all_lines) if MARKDOWN_SEPARATOR_ROW_RE.match(l.rstrip("\n"))), None)
         if sep_idx is None or sep_idx == 0:
             return [], all_lines
         header_lines = all_lines[sep_idx - 1 : sep_idx + 1]
@@ -869,6 +880,10 @@ class MarkdownTableSerializer(BaseTableSerializer):
             if table_text:
                 res_parts.append(create_ser_result(text=table_text, span_source=item))
 
+        ftn_res = doc_serializer.serialize_footnotes(item=item, **kwargs)
+        if ftn_res.text:
+            res_parts.append(ftn_res)
+
         if cap_res.text and cap_after:
             res_parts.append(cap_res)
 
@@ -934,6 +949,10 @@ class MarkdownPictureSerializer(BasePictureSerializer):
                 if len(md_table_content) > 0:
                     res_parts.append(create_ser_result(text=md_table_content, span_source=item))
 
+        ftn_res = doc_serializer.serialize_footnotes(item=item, **kwargs)
+        if ftn_res.text:
+            res_parts.append(ftn_res)
+
         if cap_res.text and cap_after:
             res_parts.append(cap_res)
 
@@ -961,7 +980,7 @@ class MarkdownPictureSerializer(BasePictureSerializer):
                 and isinstance(item.image.uri, AnyUrl)
                 and item.image.uri.scheme == "data"
             ):
-                text = f"![Image]({item.image.uri})"
+                text = f"![Image]({markdown_link_destination(item.image.uri)})"
                 text_res = text
             else:
                 # get the item.image._pil or crop it out of the page-image
@@ -1190,9 +1209,18 @@ class MarkdownDocSerializer(DocSerializer):
         text: str,
         hyperlink: AnyUrl | PurePath,
         **kwargs: Any,
-    ):
+    ) -> str:
         """Apply Markdown-specific hyperlink serialization."""
-        return f"[{text}]({hyperlink_uri(hyperlink)})"
+        return f"[{text}]({markdown_link_destination(hyperlink)})"
+
+    @override
+    def serialize_footnotes(
+        self,
+        item: FloatingItem,
+        **kwargs: Any,
+    ) -> SerializationResult:
+        """Serialize the item's footnotes, one paragraph each."""
+        return super().serialize_footnotes(item=item, **{**kwargs, "caption_delim": "\n\n"})
 
     @classmethod
     def _escape_underscores(cls, text: str):
