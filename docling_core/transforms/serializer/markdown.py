@@ -82,6 +82,9 @@ from docling_core.types.doc import (
 
 _logger = logging.getLogger(__name__)
 
+MARKDOWN_SEPARATOR_ROW_RE: re.Pattern[str] = re.compile(r"^\|(\s*:?-+:?\s*\|)+\s*$")
+"""Matches a Markdown table separator row, e.g. ``| - | :---: | --: |``."""
+
 
 def _cell_content_has_table(item: NodeItem, doc: DoclingDocument) -> bool:
     """Return True if *item* is, or has a descendant that is, a TableItem."""
@@ -229,8 +232,8 @@ class MarkdownParams(CommonParams):
     mark_meta: bool = Field(default=False, description="Mark meta sections.")
     include_annotations: bool = Field(
         default=True,
-        description="Include item annotations.",
-        deprecated="Use include_meta instead.",
+        description="Include legacy annotations. Has no effect on meta-based output.",
+        deprecated="Setting this to False only suppresses legacy `annotations`; use `blocked_meta_names` to suppress specific meta fields.",
     )
     mark_annotations: bool = Field(
         default=False,
@@ -603,18 +606,9 @@ class MarkdownAnnotationSerializer(BaseModel, BaseAnnotationSerializer):
 
 
 def _count_header_rows(item: TableItem) -> int:
-    """Count the leading grid rows on which a column header cell starts.
+    """Count the leading grid rows that form the Markdown column header.
 
-    A header cell spanning several rows is repeated into each row it covers by
-    ``TableData.grid``, so a row is only counted when a header cell actually
-    starts on it. Counting every row that merely holds a flagged cell would
-    pull the data rows beneath a vertically spanning header into the header
-    block.
-
-    A row is only promoted when it carries no non-flagged text outside the
-    leading column. Text in the leading column is exempt, because that column
-    holds the row labels, which stay unmarked even on rows that belong to the
-    header.
+    The header block is determined by ``TableData._count_column_header_rows``.
 
     Args:
         item: The table whose header rows are to be counted.
@@ -630,20 +624,10 @@ def _count_header_rows(item: TableItem) -> int:
           (i.e. the flags begin on a later row).  The caller treats this as
           "no promotable header block", and every row stays in the body.
     """
-    num_headers = 0
-    first_col = min((cell.start_col_offset_idx for cell in item.data.table_cells), default=0)
-    for row_idx, row in enumerate(item.data.grid):
-        starting_cells = [cell for cell in row if cell.start_row_offset_idx == row_idx]
-        carries_body_text = any(
-            not cell.column_header and cell.text.strip() and cell.start_col_offset_idx != first_col
-            for cell in starting_cells
-        )
-        if any(cell.column_header for cell in starting_cells) and not carries_body_text:
-            num_headers += 1
-        else:
-            if row_idx == 0 and not any(cell.column_header for later_row in item.data.grid[1:] for cell in later_row):
-                return 1
-            break
+    grid = item.data.grid
+    num_headers = item.data._count_column_header_rows(grid=grid)
+    if num_headers == 0 and grid and not any(cell.column_header for row in grid[1:] for cell in row):
+        return 1
     return num_headers
 
 
@@ -706,9 +690,6 @@ class MarkdownTableSerializer(BaseTableSerializer):
       becomes ``native backend - TTS``
     """
 
-    _SEPARATOR_ROW_RE: re.Pattern = re.compile(r"^\|(\s*:?-+:?\s*\|)+\s*$")
-    """Matches a Markdown table separator row, e.g. ``| - | :---: | --: |``."""
-
     @override
     def get_header_and_body_lines(
         self,
@@ -735,7 +716,7 @@ class MarkdownTableSerializer(BaseTableSerializer):
             remaining data rows.
         """
         all_lines = table_text.splitlines(True)
-        sep_idx = next((i for i, l in enumerate(all_lines) if self._SEPARATOR_ROW_RE.match(l.rstrip("\n"))), None)
+        sep_idx = next((i for i, l in enumerate(all_lines) if MARKDOWN_SEPARATOR_ROW_RE.match(l.rstrip("\n"))), None)
         if sep_idx is None or sep_idx == 0:
             return [], all_lines
         header_lines = all_lines[sep_idx - 1 : sep_idx + 1]
