@@ -5,6 +5,7 @@ The 2026-10-26 receipt was the body of pull request 5. This file is the in-repo 
 Branch: ai-pipestream/sync-upstream-2026-10-26-8ae9
 Base: feat/add-protobuf
 Tested commit: 4697ff43bf44d472c4519eee5d00d1bbd364c413
+Repeat on 70b9ad0bc38f25fae1862fce0b81675a597788c6 (this receipt already in the tree, git status clean): same commands, exit 0. Counts were 1215 passed, 7 skipped, 1 xfailed, 1 warning; dclq 10 passed; proto conversion 82 passed, 1 skipped. The two extra passes are test_hierarchize_all_docs on gitignored tests/data/doc/constructed_doc.embedded.json and constructed_doc.referenced.json, which the first run wrote after collection. A fresh checkout collects 1221 items.
 Upstream merged: 2dc4c9f511269eb39be5aad84b838f7bb179142e (tag v2.105.0 is 55829160b6eb17b6796fb6649e9b43bcce94cb01, then #800)
 Working tree at test time: clean
 Date: 2026-11-02T12:55:59Z
@@ -150,7 +151,7 @@ SKIPPED [1] tests/test_proto_conversion.py:2145: DOCLING_WIRE_SCHEMA_PROTO is un
 ======================== 82 passed, 1 skipped in 0.96s =========================
 ```
 
-Counts:
+Counts on 4697ff43bf44d472c4519eee5d00d1bbd364c413, the output above:
 - tests/: 1221 collected, 1213 passed, 7 skipped, 1 xfailed, 1 warning
 - packages/dclq/tests: 10 passed
 - tests/test_proto_conversion.py: 83 collected, 82 passed, 1 skipped
