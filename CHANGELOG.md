@@ -1,3 +1,36 @@
+## [v2.105.0](https://github.com/docling-project/docling-core/releases/tag/v2.105.0) - 2026-10-27
+
+### Feature
+
+* Support Python 3.15 ([#911](https://github.com/docling-project/docling-core/issues/911)) ([`b501ec8`](https://github.com/docling-project/docling-core/commit/b501ec8011181db4a08a45b27a47fe7f66814cbe))
+
+### Fix
+
+* **dclq:** Use typer's vendored click; allow typer 0.27 ([#928](https://github.com/docling-project/docling-core/issues/928)) ([`e810e29`](https://github.com/docling-project/docling-core/commit/e810e290c4093f6467859baa7f278151f43f478c))
+* Preserve rich heading context in hierarchical chunks ([#924](https://github.com/docling-project/docling-core/issues/924)) ([`5634f7c`](https://github.com/docling-project/docling-core/commit/5634f7cd5d86f990cb8d2909dab5c087dcd9cc6a))
+* **serializer:** Serialize table footnotes in Markdown and HTML ([#675](https://github.com/docling-project/docling-core/issues/675)) ([`ba6a6ca`](https://github.com/docling-project/docling-core/commit/ba6a6ca5d77d4e81031f43f6a1e7e6ee482f3c1b))
+
+## [v2.104.0](https://github.com/docling-project/docling-core/releases/tag/v2.104.0) - 2026-10-22
+
+### Feature
+
+* **doclang:** Add partial DocLang 0.8 support with multiple captions ([#880](https://github.com/docling-project/docling-core/issues/880)) ([`1707a2d`](https://github.com/docling-project/docling-core/commit/1707a2dda4235dad1daba2e166701bc39e4cf5f3))
+
+### Fix
+
+* **serializer:** Escape hyperlink destinations and skip unsupported schemes ([#920](https://github.com/docling-project/docling-core/issues/920)) ([`0aca4e5`](https://github.com/docling-project/docling-core/commit/0aca4e559441c33513d3b1131c3352bd2fe1fc79))
+* **html:** Escape code text and restore non-MathML block formula fallback ([#894](https://github.com/docling-project/docling-core/issues/894)) ([`50dc473`](https://github.com/docling-project/docling-core/commit/50dc47320deac11f093f9731325f36e8369323ea))
+* Support Pillow 13 and integer PNG exports ([#907](https://github.com/docling-project/docling-core/issues/907)) ([`e1b282a`](https://github.com/docling-project/docling-core/commit/e1b282ab8d61b19f458c99ef7d6549f6a03fb86f))
+
+## [v2.103.1](https://github.com/docling-project/docling-core/releases/tag/v2.103.1) - 2026-10-20
+
+### Fix
+
+* **markdown:** Fence code longer than any backtick run inside it ([#867](https://github.com/docling-project/docling-core/issues/867)) ([`1ab3af3`](https://github.com/docling-project/docling-core/commit/1ab3af3d7e5a75770baac3113574f52cfc871dd3))
+* **webvtt:** Ignore tags that are not cue spans instead of dropping the cue ([#896](https://github.com/docling-project/docling-core/issues/896)) ([`29c740f`](https://github.com/docling-project/docling-core/commit/29c740fd4cb9b5604687d3d897de3da172273cc6))
+* **markdown:** Cap section header depth at six heading levels ([#872](https://github.com/docling-project/docling-core/issues/872)) ([`4422110`](https://github.com/docling-project/docling-core/commit/44221107646cd6f19cd72538ae41c5c8554f40b8))
+* Reject DAG-shaped documents and oversized tables to prevent DoS ([#899](https://github.com/docling-project/docling-core/issues/899)) ([`67c5109`](https://github.com/docling-project/docling-core/commit/67c51098b9194ee4fec7e57d5a2ff2d523b950af))
+
 ## [v2.103.0](https://github.com/docling-project/docling-core/releases/tag/v2.103.0) - 2026-10-19
 
 ### Feature
