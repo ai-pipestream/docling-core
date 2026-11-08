@@ -180,9 +180,10 @@ def test_inline_group_no_duplication():
     # Formatted section heading via InlineGroup
     heading = doc.add_heading(text="", level=1)
     ig = doc.add_inline_group(parent=heading)
+    # Runs carry their own boundary whitespace; the serializer does not invent a separator.
     doc.add_text(
         label="text",
-        text="Partially formatted",
+        text="Partially formatted ",
         formatting=Formatting(italic=True),
         parent=ig,
     )
@@ -199,11 +200,11 @@ def test_inline_group_no_duplication():
 
     # Each piece of content must appear exactly once in the body
     assert body.count("\\textit{Partially formatted} heading") == 1
-    assert body.count("\\textbf{Term} : definition") == 1
+    assert body.count("\\textbf{Term}: definition") == 1
 
     # The content must be inside the LaTeX command, not on a standalone line
     assert "\\section{\\textit{Partially formatted} heading}" in body
-    assert "\\item \\textbf{Term} : definition" in body
+    assert "\\item \\textbf{Term}: definition" in body
 
 
 def test_latex_column_spanning_rich_cell_keeps_text_in_every_column(col_span_rich_table_doc):
@@ -435,7 +436,7 @@ def test_latex_inline_group_child_meta_is_suppressed():
     """Meta on items inside an InlineGroup must not produce comment blocks mid-sentence."""
     doc = DoclingDocument(name="test")
     ig = doc.add_inline_group()
-    first = doc.add_text(label=DocItemLabel.TEXT, text="Alpha", parent=ig)
+    first = doc.add_text(label=DocItemLabel.TEXT, text="Alpha ", parent=ig)
     first.meta = BaseMeta(summary=SummaryMetaField(text="A summary"))
     doc.add_text(label=DocItemLabel.TEXT, text="Beta", parent=ig)
 
@@ -536,3 +537,49 @@ def test_latex_meta_name_filters_on_picture_and_table():
     assert "annotation[description]: A sample bar chart" in allowed
     assert "annotation[description]: A table description" in allowed
     assert "annotation[classification]" not in allowed
+
+
+@pytest.mark.parametrize(
+    ("text", "formatting", "expected"),
+    [
+        ("Plain", None, r"\title{Plain}"),
+        ("Bold", Formatting(bold=True), r"\title{\textbf{Bold}}"),
+        (
+            "Nested",
+            Formatting(bold=True, italic=True),
+            r"\title{\textit{\textbf{Nested}}}",
+        ),
+        ("Set {a}", None, r"\title{Set \{a\}}"),
+        ("Unmatched {", None, r"\title{Unmatched \{}"),
+    ],
+)
+def test_latex_title_with_braces(text: str, formatting: Formatting | None, expected: str) -> None:
+    """Titles containing formatting or escaped braces still reach maketitle."""
+    doc = DoclingDocument(name="title")
+    doc.add_title(text=text, formatting=formatting)
+    doc.add_text(label=DocItemLabel.TEXT, text="Body remains.")
+
+    result = LaTeXDocSerializer(doc=doc).serialize().text
+
+    assert expected in result
+    assert result.index(expected) < result.index(r"\begin{document}")
+    assert result.count(r"\maketitle") == 1
+    assert result.index(r"\maketitle") < result.index("Body remains.")
+
+
+def test_latex_keeps_first_title_when_later_title_is_formatted() -> None:
+    """Nested titles follow the existing first-title-wins behavior."""
+    doc = DoclingDocument(name="titles")
+    doc.add_title(text="First", formatting=Formatting(bold=True))
+    doc.add_text(label=DocItemLabel.TEXT, text="Between titles.")
+    doc.add_title(text="Second", formatting=Formatting(italic=True))
+    doc.add_text(label=DocItemLabel.TEXT, text="After titles.")
+
+    result = LaTeXDocSerializer(doc=doc).serialize().text
+
+    assert result.count(r"\title{") == 1
+    assert r"\title{\textbf{First}}" in result
+    assert "Second" not in result
+    assert result.count(r"\maketitle") == 1
+    assert "Between titles." in result
+    assert "After titles." in result

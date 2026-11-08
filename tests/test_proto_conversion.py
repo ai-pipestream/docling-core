@@ -2233,3 +2233,142 @@ def test_local_image_from_proto_stays_behind_the_settings_gate(tmp_path, monkeyp
 
     round_trip.load_local_images()
     assert round_trip.pictures[0].image.pil_image.size == (2, 3)
+
+
+# ---------------------------------------------------------------------------
+# Rich headings (#924) and DocLang layer tokens (#800)
+#
+# DocMeta.headings is chunk metadata, not a DoclingDocument field, so it has
+# no wire message. The document proto keeps the empty heading and its one
+# inline, formula, or code child. The chunker fills headings from that child
+# after a round trip. ContentLayer.NOTES and ContentLayer.INVISIBLE stay on
+# the wire; the lossy notes->furniture and invisible->background mapping
+# happens only when DocLang is emitted.
+# ---------------------------------------------------------------------------
+
+
+def _chunk_texts_and_headings(doc):
+    from docling_core.transforms.chunker.hierarchical_chunker import (
+        DocChunk,
+        HierarchicalChunker,
+    )
+
+    chunks = [DocChunk.model_validate(chunk) for chunk in HierarchicalChunker(always_emit_headings=True).chunk(doc)]
+    return [(chunk.text, chunk.meta.headings) for chunk in chunks]
+
+
+def _proto_round_trip(doc):
+    return conversion.proto_to_docling_document(docling_document_to_proto(doc))
+
+
+@pytest.mark.parametrize("kind", ["title", "section_header"])
+@pytest.mark.parametrize("body", ["Body.", ""])
+@pytest.mark.parametrize("prefix", ["Energy ", ""])
+def test_rich_heading_text_survives_proto_round_trip(kind, body, prefix):
+    """#924 heading strings are derived after the document is decoded."""
+    doc = DoclingDocument(name="rich-heading")
+    heading = doc.add_title(text="") if kind == "title" else doc.add_heading(text="", level=1)
+    parent = doc.add_inline_group(parent=heading) if prefix else heading
+    if prefix:
+        doc.add_text(label=DocItemLabel.TEXT, text=prefix.strip(), parent=parent)
+    doc.add_text(label=DocItemLabel.FORMULA, text="E=mc^2", parent=parent)
+    if body:
+        doc.add_text(label=DocItemLabel.TEXT, text=body)
+
+    proto = docling_document_to_proto(doc)
+    wire_heading = getattr(proto.texts[0], proto.texts[0].WhichOneof("item"))
+    assert wire_heading.base.text == ""
+    assert len(wire_heading.base.children) == 1
+
+    # Schema 1.11 concatenates InlineGroup runs with no inserted separator.
+    # The stored text is prefix.strip(); the trailing space in the parameter
+    # is not part of the document.
+    stored = prefix.strip()
+    expected = f"{stored}$E=mc^2$"
+    assert _chunk_texts_and_headings(doc) == [(body, [expected])]
+    assert _chunk_texts_and_headings(_proto_round_trip(doc)) == [(body, [expected])]
+
+
+def test_rich_heading_code_child_survives_proto_round_trip():
+    """A single code child is heading context, not a body chunk, on both sides of the wire."""
+    doc = DoclingDocument(name="rich-heading")
+    heading = doc.add_heading(text="", level=1)
+    doc.add_code(text="print(1)", parent=heading)
+    doc.add_text(label=DocItemLabel.TEXT, text="Body.")
+
+    proto = docling_document_to_proto(doc)
+    assert proto.texts[0].section_header.base.text == ""
+    assert len(proto.texts[0].section_header.base.children) == 1
+    assert proto.texts[1].WhichOneof("item") == "code"
+
+    before = _chunk_texts_and_headings(doc)
+    after = _chunk_texts_and_headings(_proto_round_trip(doc))
+    assert before == after
+    assert len(after) == 1
+    assert after[0][0] == "Body."
+    assert after[0][1] is not None
+    assert "print(1)" in after[0][1][0]
+
+
+def test_rich_heading_before_sibling_survives_proto_round_trip():
+    doc = DoclingDocument(name="rich-heading")
+    heading = doc.add_heading(text="", level=1)
+    inline = doc.add_inline_group(parent=heading)
+    doc.add_text(label=DocItemLabel.TEXT, text="Energy", parent=inline)
+    doc.add_text(label=DocItemLabel.FORMULA, text="E=mc^2", parent=inline)
+    doc.add_heading(text="Next", level=1)
+    doc.add_text(label=DocItemLabel.TEXT, text="Body.")
+
+    proto = docling_document_to_proto(doc)
+    headers = [item.section_header for item in proto.texts if item.WhichOneof("item") == "section_header"]
+    assert [header.base.text for header in headers] == ["", "Next"]
+    assert len(headers[0].base.children) == 1
+
+    expected = [("", ["Energy$E=mc^2$"]), ("Body.", ["Next"])]
+    assert _chunk_texts_and_headings(doc) == expected
+    assert _chunk_texts_and_headings(_proto_round_trip(doc)) == expected
+
+
+@pytest.mark.parametrize(
+    ("layer", "doclang_value", "proto_value"),
+    [
+        ("notes", "furniture", pb2.CONTENT_LAYER_NOTES),
+        ("invisible", "background", pb2.CONTENT_LAYER_INVISIBLE),
+        ("furniture", "furniture", pb2.CONTENT_LAYER_FURNITURE),
+        ("background", "background", pb2.CONTENT_LAYER_BACKGROUND),
+        ("body", "body", pb2.CONTENT_LAYER_BODY),
+    ],
+)
+def test_doclang_layer_mapping_happens_after_proto_round_trip(layer, doclang_value, proto_value):
+    """Proto keeps the Docling layer. DocLang maps notes and invisible when it emits XML."""
+    from docling_core.transforms.serializer.doclang import (
+        DocLangDocSerializer,
+        DocLangParams,
+        LayerMode,
+    )
+    from docling_core.types.doc import ContentLayer
+
+    content_layer = ContentLayer(layer)
+    doc = DoclingDocument(name="layers")
+    doc.add_text(label=DocItemLabel.TEXT, text="content", content_layer=content_layer)
+    doc.add_inline_group(content_layer=content_layer)
+
+    proto = docling_document_to_proto(doc)
+    assert proto.texts[0].text.base.content_layer == proto_value
+    assert proto.groups[0].content_layer == proto_value
+
+    round_trip = _proto_round_trip(doc)
+    assert round_trip.texts[0].content_layer == content_layer
+    assert round_trip.groups[0].content_layer == content_layer
+
+    xml = (
+        DocLangDocSerializer(
+            doc=round_trip,
+            params=DocLangParams(layer_mode=LayerMode.ALWAYS),
+        )
+        .serialize()
+        .text
+    )
+    assert f'<layer value="{doclang_value}"/>' in xml
+    if layer not in {doclang_value}:
+        assert f'<layer value="{layer}"/>' not in xml
