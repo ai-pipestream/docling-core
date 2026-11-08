@@ -2,7 +2,7 @@
 
 import re
 from pathlib import PurePath
-from typing import Annotated, Any
+from typing import Annotated, Any, ClassVar
 
 from pydantic import AnyUrl, BaseModel, Field
 from typing_extensions import override
@@ -663,14 +663,15 @@ class LaTeXInlineSerializer(BaseInlineSerializer):
         list_level: int = 0,
         **kwargs: Any,
     ) -> SerializationResult:
-        """Serialize inline children joining them with spaces for LaTeX output."""
+        """Serialize inline children concatenating them faithfully for LaTeX output."""
         parts = doc_serializer.get_parts(
             item=item,
             list_level=list_level,
             is_inline_scope=True,
             **kwargs,
         )
-        text_res = " ".join([p.text for p in parts if p.text])
+        # Inline runs carry their own significant whitespace; concatenate faithfully.
+        text_res = "".join([p.text for p in parts if p.text])
         return create_ser_result(text=text_res, span_source=parts)
 
 
@@ -715,6 +716,10 @@ class LaTeXDocSerializer(DocSerializer):
     annotation_serializer: BaseAnnotationSerializer = LaTeXAnnotationSerializer()
 
     params: LaTeXParams = LaTeXParams()
+
+    # `\textbf{bold }tail` renders the same as `\textbf{bold} tail`, but keeping the space
+    # outside the group matches the other formats and keeps escaping predictable.
+    hoist_decoration_whitespace: ClassVar[bool] = True
 
     @override
     def _item_wraps_meta(self, item: NodeItem) -> bool:
@@ -904,19 +909,32 @@ class LaTeXDocSerializer(DocSerializer):
         - Removes all \title{...} occurrences from the body.
         - Returns (title_cmd, new_body_text, needs_maketitle).
 
-        Note: Regex assumes no nested braces inside \title{...}.
+        Nested groups and escaped braces are preserved in the title content.
         """
-        # Match \title{...} allowing whitespace, but not nested braces
-        pattern = re.compile(r"\\title\s*\{([^{}]*)\}", re.DOTALL)
-        first = pattern.search(body_text)
-        if not first:
-            # Nothing to do
+        title_cmd: str | None = None
+        body_parts: list[str] = []
+        cursor = 0
+        for match in re.finditer(r"\\title\s*\{", body_text):
+            if match.start() < cursor:
+                continue
+            depth = 1
+            for token in re.finditer(r"\\.|[{}]", body_text[match.end() :], re.DOTALL):
+                if token.group() == "{":
+                    depth += 1
+                elif token.group() == "}":
+                    depth -= 1
+                if depth == 0:
+                    end = match.end() + token.end()
+                    if title_cmd is None:
+                        title_cmd = "\\title{" + body_text[match.end() : end]
+                    body_parts.append(body_text[cursor : match.start()])
+                    cursor = end
+                    break
+        if title_cmd is None:
             return None, body_text, False
 
-        title_content = first.group(1)
-        title_cmd = f"\\title{{{title_content}}}"
-        # Remove all \title occurrences from the body
-        new_body = pattern.sub("", body_text)
+        body_parts.append(body_text[cursor:])
+        new_body = "".join(body_parts)
         # Trim excess empty lines that might remain
         new_body = re.sub(r"\n{3,}", "\n\n", new_body).strip()
         return title_cmd, new_body, True
