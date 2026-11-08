@@ -2280,7 +2280,11 @@ def test_rich_heading_text_survives_proto_round_trip(kind, body, prefix):
     assert wire_heading.base.text == ""
     assert len(wire_heading.base.children) == 1
 
-    expected = f"{prefix}$E=mc^2$"
+    # Schema 1.11 concatenates InlineGroup runs with no inserted separator.
+    # The stored text is prefix.strip(); the trailing space in the parameter
+    # is not part of the document.
+    stored = prefix.strip()
+    expected = f"{stored}$E=mc^2$"
     assert _chunk_texts_and_headings(doc) == [(body, [expected])]
     assert _chunk_texts_and_headings(_proto_round_trip(doc)) == [(body, [expected])]
 
@@ -2320,7 +2324,7 @@ def test_rich_heading_before_sibling_survives_proto_round_trip():
     assert [header.base.text for header in headers] == ["", "Next"]
     assert len(headers[0].base.children) == 1
 
-    expected = [("", ["Energy $E=mc^2$"]), ("Body.", ["Next"])]
+    expected = [("", ["Energy$E=mc^2$"]), ("Body.", ["Next"])]
     assert _chunk_texts_and_headings(doc) == expected
     assert _chunk_texts_and_headings(_proto_round_trip(doc)) == expected
 
