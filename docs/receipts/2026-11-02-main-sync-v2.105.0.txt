@@ -1,0 +1,144 @@
+Docling core main sync receipt, 2026-11-02
+
+Pull request 4, branch sync/upstream-2026-10-19, base main.
+The 2026-10-26 protobuf receipt lived in pull request 5. This file is the in-repo receipt for the mainline sync onto v2.105.0.
+
+Tested commit: bb3b6781fc556d342d66971e54776ae553a3f582
+Upstream merged: 2dc4c9f511269eb39be5aad84b838f7bb179142e (tag v2.105.0 is 55829160b6eb17b6796fb6649e9b43bcce94cb01, then #800)
+Pre-merge tip: d572007de9c83946efde6912150920a90362a2ec (v2.103.0)
+Working tree at test time: clean
+Date: 2026-11-02T13:02:02Z
+Package version: 2.105.0
+
+uv.lock was the only merge conflict. It was replaced with the lock checked on the protobuf sync for the same pyproject.toml. uv lock --check passed. proto/ and docling_core/proto/ are unchanged from d572007.
+
+Environment:
+
+    uv sync --frozen --group dev --all-extras --reinstall-package docling-core --reinstall-package dclq
+
+Command:
+
+    uv run pytest --cov=docling_core --cov-report=xml tests
+
+Exit code 0.
+
+```
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.3, pluggy-1.7.0
+rootdir: /workspace
+configfile: pyproject.toml
+plugins: cov-7.1.0, platformdirs-4.13.5, anyio-4.15.1
+collected 1206 items
+
+tests/test_azure_serializer.py ..                                        [  0%]
+tests/test_base.py .                                                     [  0%]
+tests/test_chunk_expander.py .......                                     [  0%]
+tests/test_cli_serialize.py ..                                           [  0%]
+tests/test_code_chunker.py .....                                         [  1%]
+tests/test_code_chunking_strategy.py .....                               [  1%]
+tests/test_compat.py ......................................              [  4%]
+tests/test_data_gen_flag.py .                                            [  5%]
+tests/test_data_lint.py ......................                           [  6%]
+tests/test_deserializer_doclang.py ..................................... [  9%]
+........................................................................ [ 15%]
+........................................................................ [ 21%]
+............................                                             [ 24%]
+tests/test_deserializer_doclang_source_mapping.py .                      [ 24%]
+tests/test_doc_base.py .....................                             [ 26%]
+tests/test_doclang_archive.py ...............                            [ 27%]
+tests/test_docling_doc.py .............................................. [ 31%]
+........................................................................ [ 37%]
+........                                                                 [ 37%]
+tests/test_doctags_load.py ..........                                    [ 38%]
+tests/test_hierarchical_chunker.py ..........................            [ 40%]
+tests/test_hierarchy.py .................................s...s.s...s.s.. [ 44%]
+....s.                                                                   [ 45%]
+tests/test_hybrid_chunker.py ........................................... [ 48%]
+                                                                         [ 48%]
+tests/test_integer_image_png.py .                                        [ 48%]
+tests/test_latex_serialization.py ..............................         [ 51%]
+tests/test_line_chunker.py ...................................           [ 54%]
+tests/test_metadata.py ...................                               [ 55%]
+tests/test_otsl_table_export.py ..                                       [ 55%]
+tests/test_page.py .........................................             [ 59%]
+tests/test_page_chunker.py .                                             [ 59%]
+tests/test_plain_text_serialization.py .......                           [ 60%]
+tests/test_profiler.py ..............                                    [ 61%]
+tests/test_proto_conversion.py ......................................... [ 64%]
+.......................s...                                              [ 66%]
+tests/test_regions_to_table.py .                                         [ 66%]
+tests/test_serialization.py ............................................ [ 70%]
+........................................................................ [ 76%]
+..............................................x......................... [ 82%]
+......................................                                   [ 85%]
+tests/test_serialization_doclang.py .................................... [ 88%]
+........................................................................ [ 94%]
+.                                                                        [ 94%]
+tests/test_serialization_doctag.py .......                               [ 95%]
+tests/test_serialization_outline.py ............                         [ 96%]
+tests/test_tokens.py ...                                                 [ 96%]
+tests/test_upath_support.py ....                                         [ 96%]
+tests/test_utils.py .....................                                [ 98%]
+tests/test_visualization.py ......                                       [ 99%]
+tests/test_webvtt.py ...........                                         [100%]
+
+=============================== warnings summary ===============================
+tests/test_line_chunker.py::test_chunk_text_makes_progress_after_standalone_prefix
+  /workspace/docling_core/transforms/chunker/line_chunker.py:90: UserWarning: Chunks prefix is too long (1 tokens) for chunk size 1. It will be split into multiple chunks and only included in the first chunk(s). Consider increasing max_tokens to accommodate the full prefix in each chunk.
+    warnings.warn(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ tests coverage ================================
+_______________ coverage: platform linux, python 3.12.3-final-0 ________________
+
+Coverage XML written to file coverage.xml
+======= 1198 passed, 7 skipped, 1 xfailed, 1 warning in 90.61s (0:01:30) =======
+```
+
+Command:
+
+    uv run pytest packages/dclq/tests
+
+Exit code 0.
+
+```
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.3, pluggy-1.7.0
+rootdir: /workspace/packages/dclq
+configfile: pyproject.toml
+plugins: cov-7.1.0, platformdirs-4.13.5, anyio-4.15.1
+collected 10 items
+
+packages/dclq/tests/test_cli.py ..........                               [100%]
+
+============================== 10 passed in 1.96s ==============================
+```
+
+Command:
+
+    uv run pytest tests/test_proto_conversion.py -ra
+
+Exit code 0.
+
+```
+============================= test session starts ==============================
+platform linux -- Python 3.12.3, pytest-9.0.3, pluggy-1.7.0
+rootdir: /workspace
+configfile: pyproject.toml
+plugins: cov-7.1.0, platformdirs-4.13.5, anyio-4.15.1
+collected 68 items
+
+tests/test_proto_conversion.py ......................................... [ 60%]
+.......................s...                                              [100%]
+
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_proto_conversion.py:2145: DOCLING_WIRE_SCHEMA_PROTO is unset
+======================== 67 passed, 1 skipped in 0.09s =========================
+```
+
+Counts on bb3b6781fc556d342d66971e54776ae553a3f582:
+- tests/: 1206 collected, 1198 passed, 7 skipped, 1 xfailed, 1 warning
+- packages/dclq/tests: 10 passed
+- tests/test_proto_conversion.py: 67 passed, 1 skipped
+
+The skipped proto test is test_descriptor_is_identical_to_the_wire_schema. DOCLING_WIRE_SCHEMA_PROTO was unset. The inventory pin in the same file passed.
