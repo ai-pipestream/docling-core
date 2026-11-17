@@ -1,0 +1,92 @@
+# Docling core upstream sync receipt, 2026-11-17
+
+Fork: ai-pipestream/docling-core
+Branch: ai-pipestream/sync-upstream-main-v2.107.1-4b12
+Base: fork main eeb5ca007a44e42f1185a7f7a0447b7b5c25784e
+Upstream merged: a8aa9dce1a80bee78bed991eb18ecbaa11bd6947 (v2.107.1)
+Merge-base before this sync: d7e545952a2988e01baa25c90e53443001afa70c
+Merge commit: 723e8015697ec1f435201f39c77c713e3dab0dd7
+Merge parents: eeb5ca007a44e42f1185a7f7a0447b7b5c25784e a8aa9dce1a80bee78bed991eb18ecbaa11bd6947
+Tested tree: c3f0c4e1b22ff1fa9523da6704684027f98aabbb
+The pytest commands ran on that tree at commit 239b406fdd69fcd3b60f1280fee0e2807d3b6042. The sign-off amend to 723e8015697ec1f435201f39c77c713e3dab0dd7 does not change the tree.
+Package version: 2.107.1
+Python: 3.12.3
+Date: 2026-11-17
+Merge strategy: ort, no conflicts. pyproject.toml and uv.lock auto-merged. Fork protobuf dependencies and generated code kept. Version strings moved to 2.107.1.
+
+## Upstream commits missing from fork main before the merge
+
+1. 981489fb2d7fbad7f743bc0b7d7ba11cbdabd848 fix(doclang): preserve hyperlinks in round trip (#1019)
+2. 584fe2474b611a9c8b39194ca94d9faf17c79a40 chore: bump version to 2.107.0 [skip ci]
+3. 876ca93c703fc2fdf928be96b08b15dce0f1da2e fix(webvtt): resolve every HTML character reference in cue text (#926)
+4. 18e6be77e005af3b3a66357b3c92d73a42e6ab84 fix(webvtt): parse cue ruby spans instead of dropping their cues (#935)
+5. eb54920b13569d4cffa9ab4db4d002593c6b5176 fix(webvtt): keep whitespace-only lines inside a cue (#975)
+6. b11a1400a2012f40db357d83342b3c183fa098a2 fix(webvtt): escape cue text and voice names when exporting to WebVTT (#972)
+7. 3faf82187053f646a5711f2ebae3be9f7bb1a0e0 fix(webvtt): keep a sub-millisecond cue serializable (#1014)
+8. a8aa9dce1a80bee78bed991eb18ecbaa11bd6947 chore: bump version to 2.107.1 [skip ci]
+
+## Proto
+
+DoclingDocument pydantic fields are unchanged. `docling_core/types/doc/document.py` is identical to fork main and to upstream main.
+
+Annotated class fields added since the merge-base, outside the fork-only proto package, are WebVTTCueRubySpan (`kind`, `start_tag`) and WebVTTCueRubyTextSpan (`kind`, `start_tag`). `START_TAG_NAMES` and the `WebVTTCueComponent` union now include `ruby` and `rt`. These are WebVTT file models, not DoclingDocument fields. No document proto fields were added. Descriptor inventory stays 141 messages, 14 enums, 749 fields.
+
+## Setup
+
+```
+uv sync --frozen --all-extras --all-packages
+```
+
+Exit code 0. The first attempt failed while building tree-sitter-java-orchard because Python.h was missing. After `python3-dev` was installed, the same command succeeded (159 packages).
+
+## Tests
+
+Command:
+
+```
+uv run --no-sync pytest --cov=docling_core --cov-report=xml tests
+```
+
+Exit code 0.
+
+```
+collected 1625 items
+===== 1611 passed, 13 skipped, 1 xfailed, 37 warnings in 103.47s (0:01:43) =====
+```
+
+Command:
+
+```
+uv run --no-sync pytest packages/dclq/tests
+```
+
+Exit code 0.
+
+```
+collected 10 items
+============================== 10 passed in 1.95s ==============================
+```
+
+Command:
+
+```
+uv run --no-sync pytest -rs tests/test_proto_conversion.py
+```
+
+Exit code 0.
+
+```
+collected 83 items
+SKIPPED [1] tests/test_proto_conversion.py:2145: DOCLING_WIRE_SCHEMA_PROTO is unset
+======================== 82 passed, 1 skipped in 1.01s =========================
+```
+
+Counts on tree c3f0c4e1b22ff1fa9523da6704684027f98aabbb:
+
+- tests/: 1625 collected, 1611 passed, 13 skipped, 1 xfailed, 0 failed
+- packages/dclq/tests: 10 collected, 10 passed, 0 skipped, 0 failed
+- tests/test_proto_conversion.py: 83 collected, 82 passed, 1 skipped, 0 failed
+
+The skipped proto test is `test_descriptor_is_identical_to_the_wire_schema`. `DOCLING_WIRE_SCHEMA_PROTO` was unset, so the canonical file comparison did not run. `test_descriptor_inventory_is_pinned` passed in the same file.
+
+Nothing failed, so fork main was not re-run as a baseline.
