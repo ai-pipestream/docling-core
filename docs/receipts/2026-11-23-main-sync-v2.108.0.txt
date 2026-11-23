@@ -7,6 +7,7 @@ Upstream merged: 5b767924cced614163e893d87612f4f674fc99d6 (v2.108.0)
 Merge-base before this sync: a8aa9dce1a80bee78bed991eb18ecbaa11bd6947 (v2.107.1)
 Merge commit: bc7fa14b16dc3bde3f7a2380bb8418fd9a0dc674
 Merge parents: f07269bdd1d0bc72533eb5a3cb7ca340ecafb0c3 5b767924cced614163e893d87612f4f674fc99d6
+Feature commit containing the tested proto, converters, and tests: 27b2f793b81bd684ff2679b02e6d352cf4ee4c3a
 Package version: 2.108.0
 Schema CURRENT_VERSION: 1.12.0
 Python: 3.12.3
