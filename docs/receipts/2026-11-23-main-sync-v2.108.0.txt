@@ -1,0 +1,163 @@
+# Docling core upstream sync receipt, 2026-11-23
+
+Fork: ai-pipestream/docling-core
+Branch: ai-pipestream/sync-upstream-main-v2.108.0-6ed1
+Base: fork main f07269bdd1d0bc72533eb5a3cb7ca340ecafb0c3
+Upstream merged: 5b767924cced614163e893d87612f4f674fc99d6 (v2.108.0)
+Merge-base before this sync: a8aa9dce1a80bee78bed991eb18ecbaa11bd6947 (v2.107.1)
+Merge commit: bc7fa14b16dc3bde3f7a2380bb8418fd9a0dc674
+Merge parents: f07269bdd1d0bc72533eb5a3cb7ca340ecafb0c3 5b767924cced614163e893d87612f4f674fc99d6
+Feature commit containing the tested proto, converters, and tests: 27b2f793b81bd684ff2679b02e6d352cf4ee4c3a
+Package version: 2.108.0
+Schema CURRENT_VERSION: 1.12.0
+Python: 3.12.3
+uv: 0.13.9
+Date: 2026-11-23
+Merge strategy: ort. One conflict, uv.lock. Kept the fork grpcio-tools>=1.80.0 dev dependency and took upstream doclang>=0.10.1,<0.11. pyproject.toml auto-merged (version 2.108.0, grpcio-tools kept, doclang bumped). No rebase, no force-push.
+
+The pytest commands below ran on the working tree after the schema 1.12 proto, converters, and tests were in place, and before this receipt file and the scripts/gen_proto.py docstring blank line were added. Neither file is imported by the suites.
+
+## Upstream commits missing from fork main before the merge
+
+1. 6cb11010e58c97c65ef05ed90ccb0c68e761b20d feat: add TrackItem and DocLang `<track>` support (#940)
+2. 5b767924cced614163e893d87612f4f674fc99d6 chore: bump version to 2.108.0 [skip ci]
+
+## Proto
+
+Descriptor inventory: 143 messages, 15 enums, 769 fields. Was 141 messages, 14 enums, 749 fields. Added MediaRef and TrackItem, the MediaMimetype enum, and 20 fields. Enum values are not counted as fields.
+
+DoclingDocument.version stays the optional string that carries pydantic CURRENT_VERSION ("1.12.0"). No parallel version enum. Same treatment as schema 1.11.0.
+
+Append-only. Existing tags were not renumbered. Fields 16-28 stay the extension block. tracks is appended at 29.
+
+DocItemLabel:
+- DOC_ITEM_LABEL_MARKER = 30 (unchanged)
+- DOC_ITEM_LABEL_TRACK = 31
+
+MediaMimetype (closed MEDIA_EXTENSIONS set, no mimetype_raw):
+- MEDIA_MIMETYPE_UNSPECIFIED = 0
+- MEDIA_MIMETYPE_MP3 = 1 (audio/mpeg)
+- MEDIA_MIMETYPE_M4A = 2 (audio/mp4)
+- MEDIA_MIMETYPE_AAC = 3 (audio/aac)
+- MEDIA_MIMETYPE_OGG = 4 (audio/ogg)
+- MEDIA_MIMETYPE_WAV = 5 (audio/wav)
+- MEDIA_MIMETYPE_FLAC = 6 (audio/flac)
+- MEDIA_MIMETYPE_WMA = 7 (audio/x-ms-wma)
+- MEDIA_MIMETYPE_AIFF = 8 (audio/x-aiff)
+- MEDIA_MIMETYPE_MP4 = 9 (video/mp4)
+- MEDIA_MIMETYPE_WEBM = 10 (video/webm)
+- MEDIA_MIMETYPE_MKV = 11 (video/x-matroska)
+- MEDIA_MIMETYPE_MOV = 12 (video/quicktime)
+- MEDIA_MIMETYPE_M4V = 13 (video/x-m4v)
+- MEDIA_MIMETYPE_WMV = 14 (video/x-ms-wmv)
+- MEDIA_MIMETYPE_ASF = 15 (video/x-ms-asf)
+- MEDIA_MIMETYPE_AVI = 16 (video/x-msvideo)
+- MEDIA_MIMETYPE_MPG = 17 (video/mpeg)
+- MEDIA_MIMETYPE_FLV = 18 (video/x-flv)
+
+MediaRef:
+- mimetype = 1 (MediaMimetype)
+- oneof uri { url = 2; file_path = 3; }
+  url is AnyUrl, including file://. file_path is Path. The converter does not coerce.
+
+TrackItem:
+- self_ref = 1
+- parent = 2
+- children = 3
+- content_layer = 4
+- meta = 5 (FloatingMeta)
+- label = 6
+- prov = 7
+- captions = 8
+- references = 9
+- footnotes = 10
+- image = 11
+- source = 12
+- comments = 13
+- label_raw = 14
+- audio = 15 (MediaRef, must be audio/*)
+- video = 16 (MediaRef, must be video/*)
+
+DoclingDocument:
+- tracks = 29 (repeated TrackItem)
+
+TrackSource (existing message, behavior change only): end_time == start_time is an instant and round-trips, including the origin. Both doubles are always written, including 0. end_time < start_time is still rejected by the model.
+
+Conversion errors (ValueError, same wording as the model where the model has one):
+- unset mimetype: "Unsupported media type: unset"
+- unknown tag or string: "Unsupported media type: {value!r}"
+- unset uri: "MediaRef.uri is unset"
+- wrong kind: "Not an audio media type: ..." / "Not a video media type: ..."
+- data: URIs raise pydantic ValidationError from MediaRef
+
+Empty tracks: the pydantic serializer omits the key from export_to_dict. The converter leaves proto.tracks empty. The reverse pass always supplies the list.
+
+Ruff exclude: docling_core/proto/gen/** is excluded. protoc emits single-quoted strings (Q000). The generated module already failed ruff on fork main (379 findings). Regenerating it for MediaMimetype, MediaRef, and TrackItem made that 385. force-exclude was already set, so hooks and the PR fast check honor the exclude when the file is passed by name. scripts/gen_proto.py gained the blank line after the module docstring that ruff format requires. The ruff-format hook runs with pass_filenames false, so that pre-existing finding fails the lint job whenever the hook runs.
+
+## Setup
+
+```
+uv sync --frozen --all-extras --all-packages
+```
+
+Exit code 0 after python3-dev was installed (tree-sitter). 159 packages. uv 0.13.9.
+
+## Tests
+
+Command:
+
+```
+uv run --no-sync pytest --cov=docling_core --cov-report=xml tests
+```
+
+Exit code 0. Python 3.12.3, pytest-9.0.3.
+
+```
+collected 1843 items
+==== 1777 passed, 13 skipped, 53 xfailed, 37 warnings in 102.83s (0:01:42) =====
+```
+
+Command:
+
+```
+uv run --no-sync pytest packages/dclq/tests
+```
+
+Exit code 0.
+
+```
+collected 10 items
+============================== 10 passed in 1.82s ==============================
+```
+
+Command:
+
+```
+uv run --no-sync pytest -rs tests/test_proto_conversion.py
+```
+
+Exit code 0.
+
+```
+collected 90 items
+SKIPPED [1] tests/test_proto_conversion.py:2074: DOCLING_WIRE_SCHEMA_PROTO is unset
+======================== 89 passed, 1 skipped in 0.89s =========================
+```
+
+Counts:
+
+- tests/: 1843 collected, 1777 passed, 13 skipped, 53 xfailed, 0 failed
+- packages/dclq/tests: 10 collected, 10 passed, 0 skipped, 0 failed
+- tests/test_proto_conversion.py: 90 collected, 89 passed, 1 skipped, 0 failed
+
+The skipped proto test is test_descriptor_is_identical_to_the_wire_schema. DOCLING_WIRE_SCHEMA_PROTO was unset, so the canonical file comparison did not run. test_descriptor_inventory_is_pinned passed (143 messages, 15 enums, 769 fields). test_schema_1_12_field_numbers_are_stable passed.
+
+The 53 xfailed are upstream doclang track round-trip cases marked xfail in tests/test_doclang_track_roundtrip.py. They arrived with the merge. Nothing in the proto suite failed.
+
+Style, before this receipt was added:
+
+```
+uv run --no-sync prek run --all-files
+```
+
+Exit code 0 after the gen_proto.py blank line. Hooks: trailing whitespace, end of file, yaml, toml, merge conflict, large files, ruff check, ruff format, compat projector coverage, ty, docs, uv-lock. Compat projectors: 7 registered for schema 1.5..1.12, all snapshots present. generate_docs wrote no files.
