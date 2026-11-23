@@ -1,7 +1,13 @@
+from pathlib import Path
+
 import pytest
+from pydantic import AnyUrl, ValidationError
+
+from docling_core.proto import docling_document_to_proto, proto_to_docling_document
+from docling_core.proto.gen.ai.docling.core.v1 import docling_document_pb2 as pb2
 from docling_core.types.doc import (
-    DoclingDocument,
     DocItemLabel,
+    DoclingDocument,
     DocumentOrigin,
     PageItem,
     PictureClassificationLabel,
@@ -11,34 +17,76 @@ from docling_core.types.doc import (
     PictureMeta,
     Size,
 )
-from docling_core.proto import docling_document_to_proto
-from docling_core.proto.gen.ai.docling.core.v1 import docling_document_pb2 as pb2
+from docling_core.types.doc.base import BoundingBox, CoordOrigin
+from docling_core.types.doc.common.constants import CURRENT_VERSION
+from docling_core.types.doc.common.reference import MEDIA_EXTENSIONS, MediaRef
+from docling_core.types.doc.document import (
+    BaseMeta,
+    CodeItem,
+    DescriptionMetaField,
+    EntitiesMetaField,
+    EntityMention,
+    FloatingMeta,
+    Formatting,
+    GraphCell,
+    GraphData,
+    GraphLink,
+    GroupItem,
+    ImageRef,
+    InlineGroup,
+    KeyValueItem,
+    KeywordsMetaField,
+    LanguageMetaField,
+    ListGroup,
+    ListItem,
+    OrderedList,
+    Orientation,
+    ProvenanceItem,
+    RichTableCell,
+    SummaryMetaField,
+    TableCell,
+    TableData,
+    TableItem,
+    TopicsMetaField,
+    TrackItem,
+    TrackSource,
+)
+from docling_core.types.doc.labels import (
+    CodeLanguageLabel,
+    GraphCellLabel,
+    GraphLinkLabel,
+    GroupLabel,
+    HumanLanguageLabel,
+)
 from docling_core.utils import conversion
+
 
 def test_minimal_doc_conversion():
     doc = DoclingDocument(name="test_doc")
     proto = docling_document_to_proto(doc)
-    
+
     assert proto.name == "test_doc"
     assert proto.body.name == "_root_"
     assert proto.furniture.name == "_root_"
 
+
 def test_doc_with_text_conversion():
     doc = DoclingDocument(name="test_doc")
     doc.add_text(label=DocItemLabel.PARAGRAPH, text="Hello world")
-    
+
     proto = docling_document_to_proto(doc)
-    
+
     assert len(proto.texts) == 1
     assert proto.texts[0].text.base.text == "Hello world"
     assert proto.texts[0].text.base.label == pb2.DOC_ITEM_LABEL_PARAGRAPH
 
+
 def test_doc_with_title_conversion():
     doc = DoclingDocument(name="test_doc")
     doc.add_title(text="Main Title")
-    
+
     proto = docling_document_to_proto(doc)
-    
+
     assert len(proto.texts) == 1
     assert proto.texts[0].title.base.text == "Main Title"
     assert proto.texts[0].title.base.label == pb2.DOC_ITEM_LABEL_TITLE
@@ -59,7 +107,7 @@ def test_pages_map_keys_are_ints_in_proto():
 
 
 def test_structural_item_labels_are_enum_with_raw_fallback():
-    for message_name in ("PictureItem", "TableItem", "KeyValueItem", "FormItem"):
+    for message_name in ("PictureItem", "TableItem", "KeyValueItem", "FormItem", "TrackItem"):
         descriptor = pb2.DESCRIPTOR.message_types_by_name[message_name]
         label_field = descriptor.fields_by_name["label"]
         assert label_field.enum_type is not None
@@ -153,9 +201,7 @@ def test_code_language_fallback_for_unknown_value():
 def test_table_data_orientation_conversion():
     from docling_core.types.doc.document import Orientation, TableData
 
-    proto = conversion._to_table_data(
-        TableData(num_rows=2, num_cols=3, orientation=Orientation.ROT_90)
-    )
+    proto = conversion._to_table_data(TableData(num_rows=2, num_cols=3, orientation=Orientation.ROT_90))
     assert proto.orientation == pb2.ORIENTATION_ROT_90
     assert proto.orientation_raw == ""
 
@@ -278,46 +324,6 @@ def test_picture_classification_other_chart_roundtrip():
 # Reverse direction: proto_to_docling_document
 # ---------------------------------------------------------------------------
 
-from docling_core.proto import proto_to_docling_document
-from docling_core.types.doc.base import BoundingBox, CoordOrigin
-from docling_core.types.doc.document import (
-    BaseMeta,
-    CodeItem,
-    DescriptionMetaField,
-    EntitiesMetaField,
-    EntityMention,
-    FloatingMeta,
-    Formatting,
-    GraphCell,
-    GraphData,
-    GraphLink,
-    GroupItem,
-    ImageRef,
-    InlineGroup,
-    KeyValueItem,
-    KeywordsMetaField,
-    LanguageMetaField,
-    ListGroup,
-    ListItem,
-    OrderedList,
-    Orientation,
-    ProvenanceItem,
-    RichTableCell,
-    SummaryMetaField,
-    TableCell,
-    TableData,
-    TableItem,
-    TopicsMetaField,
-    TrackSource,
-)
-from docling_core.types.doc.labels import (
-    CodeLanguageLabel,
-    GraphCellLabel,
-    GraphLinkLabel,
-    GroupLabel,
-    HumanLanguageLabel,
-)
-
 _PNG_DATA_URI = (
     "data:image/png;base64,"
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
@@ -407,16 +413,12 @@ def test_round_trip_of_fixture_documents(factory):
 def test_round_trip_rich_document():
     doc = DoclingDocument(
         name="rich",
-        origin=DocumentOrigin(
-            mimetype="application/pdf", binary_hash=123, filename="a.pdf"
-        ),
+        origin=DocumentOrigin(mimetype="application/pdf", binary_hash=123, filename="a.pdf"),
     )
     doc.pages = {1: PageItem(size=Size(width=100.0, height=200.0), page_no=1)}
 
     code = doc.add_code(text="print('x')", code_language=CodeLanguageLabel.PYTHON)
-    code.meta = FloatingMeta(
-        description=DescriptionMetaField(text="d", confidence=0.5, created_by="me")
-    )
+    code.meta = FloatingMeta(description=DescriptionMetaField(text="d", confidence=0.5, created_by="me"))
 
     prov = ProvenanceItem(
         page_no=1,
@@ -430,9 +432,7 @@ def test_round_trip_rich_document():
         formatting=Formatting(bold=True),
         hyperlink="https://example.com/x",
     )
-    text.source = [
-        TrackSource(start_time=1.0, end_time=2.0, identifier="cue-1", voice="John")
-    ]
+    text.source = [TrackSource(start_time=1.0, end_time=2.0, identifier="cue-1", voice="John")]
 
     table = doc.add_table(data=TableData(table_cells=[], num_rows=1, num_cols=2))
     rich_target = doc.add_text(label=DocItemLabel.TEXT, text="cellbody", parent=table)
@@ -460,9 +460,7 @@ def test_round_trip_rich_document():
             graph=GraphData(
                 cells=[
                     GraphCell(label=GraphCellLabel.KEY, cell_id=0, text="k", orig="k"),
-                    GraphCell(
-                        label=GraphCellLabel.VALUE, cell_id=1, text="v", orig="v"
-                    ),
+                    GraphCell(label=GraphCellLabel.VALUE, cell_id=1, text="v", orig="v"),
                 ],
                 links=[
                     GraphLink(
@@ -491,9 +489,7 @@ def test_round_trip_rich_document():
         keywords=KeywordsMetaField(values=["k1", "k2"]),
         topics=TopicsMetaField(values=["t1"]),
     )
-    meta.set_custom_field(
-        namespace="my_corp", name="score", value={"a": [1, 2.5, None, True, "x"]}
-    )
+    meta.set_custom_field(namespace="my_corp", name="score", value={"a": [1, 2.5, None, True, "x"]})
     doc.texts[1].meta = meta
 
     _assert_round_trip(doc)
@@ -512,13 +508,12 @@ def test_round_trip_groups():
 
 def test_reverse_raw_fallback_states_table_label():
     # enum tag > 0: mapped enum value.
-    msg = pb2.TableItem(
-        self_ref="#/tables/0", label=pb2.DOC_ITEM_LABEL_DOCUMENT_INDEX
-    )
+    msg = pb2.TableItem(self_ref="#/tables/0", label=pb2.DOC_ITEM_LABEL_DOCUMENT_INDEX)
     msg.data.num_rows = 0
     msg.data.num_cols = 0
-    doc_msg = pb2.DoclingDocument(name="t", body=pb2.GroupItem(self_ref="#/body"),
-                                  furniture=pb2.GroupItem(self_ref="#/furniture"))
+    doc_msg = pb2.DoclingDocument(
+        name="t", body=pb2.GroupItem(self_ref="#/body"), furniture=pb2.GroupItem(self_ref="#/furniture")
+    )
     doc_msg.tables.append(msg)
     doc = proto_to_docling_document(doc_msg)
     assert doc.tables[0].label == DocItemLabel.DOCUMENT_INDEX
@@ -538,9 +533,7 @@ def test_reverse_raw_fallback_states_table_label():
 
 def test_reverse_raw_fallback_states_code_language():
     # CodeMetaField.language: tag 0 + raw -> the vocabulary catch-all UNKNOWN.
-    meta_msg = pb2.CodeMetaField(
-        text="x", language=pb2.CODE_LANGUAGE_LABEL_UNSPECIFIED, language_raw="zig"
-    )
+    meta_msg = pb2.CodeMetaField(text="x", language=pb2.CODE_LANGUAGE_LABEL_UNSPECIFIED, language_raw="zig")
     meta = conversion._from_code_meta(meta_msg)
     assert meta.language == CodeLanguageLabel.UNKNOWN
 
@@ -549,24 +542,18 @@ def test_reverse_raw_fallback_states_code_language():
     assert meta.language is None
 
     # tag > 0 -> mapped value.
-    meta = conversion._from_code_meta(
-        pb2.CodeMetaField(text="x", language=pb2.CODE_LANGUAGE_LABEL_PYTHON)
-    )
+    meta = conversion._from_code_meta(pb2.CodeMetaField(text="x", language=pb2.CODE_LANGUAGE_LABEL_PYTHON))
     assert meta.language == CodeLanguageLabel.PYTHON
 
 
 def test_reverse_orientation_and_coord_origin_fallbacks():
-    data_msg = pb2.TableData(
-        num_rows=1, num_cols=1, orientation=pb2.ORIENTATION_ROT_270
-    )
+    data_msg = pb2.TableData(num_rows=1, num_cols=1, orientation=pb2.ORIENTATION_ROT_270)
     assert conversion._from_table_data(data_msg).orientation == Orientation.ROT_270
 
     data_msg = pb2.TableData(num_rows=1, num_cols=1, orientation_raw="rot_future")
     assert conversion._from_table_data(data_msg).orientation == Orientation.ROT_0
 
-    bbox_msg = pb2.BoundingBox(
-        l=1, t=2, r=3, b=4, coord_origin=pb2.COORD_ORIGIN_BOTTOMLEFT
-    )
+    bbox_msg = pb2.BoundingBox(l=1, t=2, r=3, b=4, coord_origin=pb2.COORD_ORIGIN_BOTTOMLEFT)
     assert conversion._from_bbox(bbox_msg).coord_origin == CoordOrigin.BOTTOMLEFT
 
     bbox_msg = pb2.BoundingBox(l=1, t=2, r=3, b=4, coord_origin_raw="CENTER")
@@ -622,11 +609,7 @@ def test_reverse_charspan_tuples():
         charspan=(3, 9),
     )
     text = doc.add_text(label=DocItemLabel.TEXT, text="abc", prov=prov)
-    text.meta = BaseMeta(
-        entities=EntitiesMetaField(
-            mentions=[EntityMention(text="abc", charspan=(0, 3))]
-        )
-    )
+    text.meta = BaseMeta(entities=EntitiesMetaField(mentions=[EntityMention(text="abc", charspan=(0, 3))]))
     roundtripped = _assert_round_trip(doc)
     item = roundtripped.texts[0]
     assert item.prov[0].charspan == (3, 9)
@@ -705,9 +688,7 @@ def test_reverse_graph_data():
             self_ref="#/key_value_items/0",
             graph=GraphData(
                 cells=[
-                    GraphCell(
-                        label=GraphCellLabel.KEY, cell_id=0, text="k", orig="K"
-                    ),
+                    GraphCell(label=GraphCellLabel.KEY, cell_id=0, text="k", orig="K"),
                     GraphCell(
                         label=GraphCellLabel.VALUE,
                         cell_id=1,
@@ -761,7 +742,11 @@ def test_reverse_text_arm_dispatches_on_label():
     must reconstruct the same classes the JSON loading path would produce."""
     from docling_core.types.doc.document import (
         ListItem as ListItemModel,
+    )
+    from docling_core.types.doc.document import (
         SectionHeaderItem as SectionHeaderModel,
+    )
+    from docling_core.types.doc.document import (
         TitleItem as TitleModel,
     )
 
@@ -807,6 +792,7 @@ def test_reverse_text_arm_dispatches_on_label():
 # parity truth these tests pin.
 # ---------------------------------------------------------------------------
 
+
 def _assert_json_parity_round_trip(doc: DoclingDocument) -> DoclingDocument:
     """Assert the proto round trip agrees with a JSON dump/load round trip."""
     proto_round_trip = proto_to_docling_document(docling_document_to_proto(doc))
@@ -817,9 +803,7 @@ def _assert_json_parity_round_trip(doc: DoclingDocument) -> DoclingDocument:
 
 
 def _self_refs(doc: DoclingDocument) -> list[str]:
-    return [group.self_ref for group in doc.groups] + [
-        text.self_ref for text in doc.texts
-    ]
+    return [group.self_ref for group in doc.groups] + [text.self_ref for text in doc.texts]
 
 
 def _add_group(doc: DoclingDocument, parent, factory, **kwargs):
@@ -831,9 +815,7 @@ def _add_group(doc: DoclingDocument, parent, factory, **kwargs):
     legacy `ordered_list` label, which is what a foreign producer or an older
     document can put on the wire.
     """
-    group = factory(
-        self_ref=f"#/groups/{len(doc.groups)}", parent=parent.get_ref(), **kwargs
-    )
+    group = factory(self_ref=f"#/groups/{len(doc.groups)}", parent=parent.get_ref(), **kwargs)
     doc.groups.append(group)
     parent.children.append(group.get_ref())
     return group
@@ -1091,14 +1073,10 @@ def _picture_doc_with_barcodes(*, meta: pb2.PictureMeta = None) -> pb2.DoclingDo
     if meta is not None:
         picture.meta.CopyFrom(meta)
     picture.annotations.add().barcode.CopyFrom(
-        pb2.BarcodeAnnotation(
-            format="QRCode", value="https://example.org/a", provenance="zxing"
-        )
+        pb2.BarcodeAnnotation(format="QRCode", value="https://example.org/a", provenance="zxing")
     )
     picture.annotations.add().barcode.CopyFrom(
-        pb2.BarcodeAnnotation(
-            format="Code128", value="0123456789", provenance="opencv"
-        )
+        pb2.BarcodeAnnotation(format="Code128", value="0123456789", provenance="opencv")
     )
     return doc_msg
 
@@ -1114,9 +1092,7 @@ def test_typed_barcodes_project_into_picture_meta():
     assert json.dumps(payloads) == BARCODE_PROJECTION_JSON
 
     dumped = doc.export_to_dict()
-    assert json.dumps(dumped["pictures"][0]["meta"]["pipestream__barcodes"]) == (
-        BARCODE_PROJECTION_JSON
-    )
+    assert json.dumps(dumped["pictures"][0]["meta"]["pipestream__barcodes"]) == (BARCODE_PROJECTION_JSON)
     # A picture with no proto meta still gets one, carrying only the
     # projection: the same shape the exporter emits for that input.
     assert list(dumped["pictures"][0]["meta"]) == ["pipestream__barcodes"]
@@ -1128,9 +1104,7 @@ def test_typed_barcodes_do_not_override_a_meta_carried_field():
     import json
 
     meta = pb2.PictureMeta()
-    meta.custom_fields["pipestream__barcodes"].list_value.values.add().string_value = (
-        "producer wrote this"
-    )
+    meta.custom_fields["pipestream__barcodes"].list_value.values.add().string_value = "producer wrote this"
     meta.custom_fields["pipestream__alpha"].string_value = "first"
     doc = proto_to_docling_document(_picture_doc_with_barcodes(meta=meta))
 
@@ -1195,14 +1169,8 @@ def _every_extension_document() -> pb2.DoclingDocument:
             keywords=["wire", "schema"],
             schema_location="https://example.org/schema.xsd",
             extra={"department": "research"},
-            identifiers=[
-                pb2.Identifier(kind="doi", value="10.1000/xyz", scope="article")
-            ],
-            classifications=[
-                pb2.Classification(
-                    scheme="cpc", code="G06F", edition="2023.01", office="EP"
-                )
-            ],
+            identifiers=[pb2.Identifier(kind="doi", value="10.1000/xyz", scope="article")],
+            classifications=[pb2.Classification(scheme="cpc", code="G06F", edition="2023.01", office="EP")],
             license=pb2.LicenseMeta(
                 type_uri="https://creativecommons.org/licenses/by/4.0/",
                 statement="CC BY 4.0",
@@ -1217,9 +1185,7 @@ def _every_extension_document() -> pb2.DoclingDocument:
                     statement="Funded by EF-1.",
                 )
             ],
-            namespaces=[
-                pb2.NamespaceBinding(prefix="dc", uri="http://purl.org/dc/elements/1.1/")
-            ],
+            namespaces=[pb2.NamespaceBinding(prefix="dc", uri="http://purl.org/dc/elements/1.1/")],
             schema_locations=[
                 pb2.SchemaLocation(
                     namespace="http://purl.org/dc/elements/1.1/",
@@ -1252,9 +1218,7 @@ def _every_extension_document() -> pb2.DoclingDocument:
                 pb2.UserProperty(name="p_number", number=1.5),
                 pb2.UserProperty(name="p_boolean", boolean=True),
                 pb2.UserProperty(name="p_instant", instant=stamp),
-                pb2.UserProperty(
-                    name="p_date", date=pb2.CivilDateTime(year=2023, month=11, day=14)
-                ),
+                pb2.UserProperty(name="p_date", date=pb2.CivilDateTime(year=2023, month=11, day=14)),
             ],
             format_version="1.7",
             structured=True,
@@ -1350,12 +1314,8 @@ def _every_extension_document() -> pb2.DoclingDocument:
         pivots=[
             pb2.PivotSpec(
                 name="Pivot1",
-                source=pb2.GridSpan(
-                    start=pb2.GridCell(row=0, col=0), end=pb2.GridCell(row=9, col=3)
-                ),
-                output=pb2.GridSpan(
-                    start=pb2.GridCell(row=0, col=5), end=pb2.GridCell(row=4, col=7)
-                ),
+                source=pb2.GridSpan(start=pb2.GridCell(row=0, col=0), end=pb2.GridCell(row=9, col=3)),
+                output=pb2.GridSpan(start=pb2.GridCell(row=0, col=5), end=pb2.GridCell(row=4, col=7)),
                 row_fields=["region"],
                 column_fields=["quarter"],
                 data_fields=["total"],
@@ -1371,9 +1331,7 @@ def _every_extension_document() -> pb2.DoclingDocument:
                     binary_hash=8,
                     filename="page.pdf",
                 ),
-                page_styles=[
-                    pb2.PageStyle(name="Lost", size=pb2.Size(width=1.0, height=1.0))
-                ],
+                page_styles=[pb2.PageStyle(name="Lost", size=pb2.Size(width=1.0, height=1.0))],
                 email=pb2.EmailMeta(message_id="<m2@example.org>"),
                 media=pb2.MediaMeta(codec="aac"),
             )
@@ -1499,14 +1457,8 @@ def _every_extension_document() -> pb2.DoclingDocument:
             rotation_degrees=90.0,
         )
     )
-    text.text.base.footnote_meta.CopyFrom(
-        pb2.FootnoteMeta(
-            label="1", endnote=True, mark=pb2.FineRef(ref="#/texts/1")
-        )
-    )
-    text.text.base.index_meta.CopyFrom(
-        pb2.IndexMeta(service="index", title="Extensions, wire")
-    )
+    text.text.base.footnote_meta.CopyFrom(pb2.FootnoteMeta(label="1", endnote=True, mark=pb2.FineRef(ref="#/texts/1")))
+    text.text.base.index_meta.CopyFrom(pb2.IndexMeta(service="index", title="Extensions, wire"))
 
     code = doc_msg.texts.add()
     code.code.self_ref = "#/texts/1"
@@ -1531,11 +1483,7 @@ def _every_extension_document() -> pb2.DoclingDocument:
     cell.text = "2023-11-14"
     cell.end_row_offset_idx = 1
     cell.end_col_offset_idx = 1
-    cell.value.datetime.CopyFrom(
-        pb2.CivilDateTime(
-            year=2023, month=11, day=14, hour=22, minute=13, second=20, nanos=0
-        )
-    )
+    cell.value.datetime.CopyFrom(pb2.CivilDateTime(year=2023, month=11, day=14, hour=22, minute=13, second=20, nanos=0))
     cell.value.number_format = "yyyy-mm-dd"
     cell.spans.append(span)
     cell.align = pb2.ALIGNMENT_CENTER
@@ -1597,9 +1545,7 @@ def _every_extension_document() -> pb2.DoclingDocument:
         )
     )
     picture.annotations.add().barcode.CopyFrom(
-        pb2.BarcodeAnnotation(
-            format="QRCode", value="https://example.org/a", provenance="zxing"
-        )
+        pb2.BarcodeAnnotation(format="QRCode", value="https://example.org/a", provenance="zxing")
     )
     picture.source_element_name = "img"
     picture.source_namespace = "http://www.w3.org/1999/xhtml"
@@ -1623,11 +1569,7 @@ def _every_extension_document() -> pb2.DoclingDocument:
             index=0,
             visible=True,
             tab_color="#00ff00",
-            print_areas=[
-                pb2.GridSpan(
-                    start=pb2.GridCell(row=0, col=0), end=pb2.GridCell(row=9, col=3)
-                )
-            ],
+            print_areas=[pb2.GridSpan(start=pb2.GridCell(row=0, col=0), end=pb2.GridCell(row=9, col=3))],
         )
     )
 
@@ -1936,11 +1878,7 @@ def _claimed_document() -> pb2.DoclingDocument:
             pb2.CollectorClaim(
                 source=libreoffice,
                 source_meta=pb2.DocumentMeta(title="Letter"),
-                page_styles=[
-                    pb2.PageStyle(
-                        name="Standard", size=pb2.Size(width=595.0, height=842.0)
-                    )
-                ],
+                page_styles=[pb2.PageStyle(name="Standard", size=pb2.Size(width=595.0, height=842.0))],
                 email=pb2.EmailMeta(message_id="<m1@example.org>"),
                 media=pb2.MediaMeta(codec="aac"),
             ),
@@ -1995,15 +1933,10 @@ def test_collector_claim_and_field_source_numbers_match_the_wire_schema():
         ("field", 1),
         ("source", 2),
     ]
-    assert field_source.fields_by_name["source"].message_type.name == (
-        "CollectorSource"
-    )
+    assert field_source.fields_by_name["source"].message_type.name == ("CollectorSource")
 
     claim = pb2.DESCRIPTOR.message_types_by_name["CollectorClaim"]
-    assert [
-        (f.name, f.number, f.message_type.name, f.has_presence)
-        for f in claim.fields
-    ] == [
+    assert [(f.name, f.number, f.message_type.name, f.has_presence) for f in claim.fields] == [
         ("source", 1, "CollectorSource", True),
         ("source_meta", 2, "DocumentMeta", True),
         ("origin", 3, "DocumentOrigin", True),
@@ -2054,9 +1987,9 @@ def test_source_identity_and_line_range_numbers_match_the_wire_schema():
 
 # The fork's descriptor inventory, counted the way `_flatten_file` counts:
 # map entry messages and their key/value fields included.
-_WIRE_SCHEMA_MESSAGES = 141
-_WIRE_SCHEMA_ENUMS = 14
-_WIRE_SCHEMA_FIELDS = 749
+_WIRE_SCHEMA_MESSAGES = 143
+_WIRE_SCHEMA_ENUMS = 15
+_WIRE_SCHEMA_FIELDS = 769
 
 # The root message is the one deliberate rename.
 _ROOT_MESSAGE_RENAMES = {"Document": "DoclingDocument"}
@@ -2082,11 +2015,7 @@ def _flatten_file(file_proto, renames):
         name = prefix + renames.get(message.name, message.name)
         messages[name] = [o.name for o in message.oneof_decl]
         for field in message.field:
-            oneof = (
-                message.oneof_decl[field.oneof_index].name
-                if field.HasField("oneof_index")
-                else None
-            )
+            oneof = message.oneof_decl[field.oneof_index].name if field.HasField("oneof_index") else None
             fields[f"{name}.{field.name}"] = (
                 field.number,
                 field.label,
@@ -2372,3 +2301,337 @@ def test_doclang_layer_mapping_happens_after_proto_round_trip(layer, doclang_val
     assert f'<layer value="{doclang_value}"/>' in xml
     if layer not in {doclang_value}:
         assert f'<layer value="{layer}"/>' not in xml
+
+
+# ---------------------------------------------------------------------------
+# Schema 1.12.0: TrackItem, MediaRef, DocItemLabel.TRACK, TrackSource instants
+# ---------------------------------------------------------------------------
+
+# DocItemLabel tags. Append-only: TRACK is 31 and nothing below it moves.
+_DOC_ITEM_LABEL_NUMBERS = {
+    "DOC_ITEM_LABEL_UNSPECIFIED": 0,
+    "DOC_ITEM_LABEL_CAPTION": 1,
+    "DOC_ITEM_LABEL_CHART": 2,
+    "DOC_ITEM_LABEL_CHECKBOX_SELECTED": 3,
+    "DOC_ITEM_LABEL_CHECKBOX_UNSELECTED": 4,
+    "DOC_ITEM_LABEL_CODE": 5,
+    "DOC_ITEM_LABEL_DOCUMENT_INDEX": 6,
+    "DOC_ITEM_LABEL_EMPTY_VALUE": 7,
+    "DOC_ITEM_LABEL_FOOTNOTE": 8,
+    "DOC_ITEM_LABEL_FORM": 9,
+    "DOC_ITEM_LABEL_FORMULA": 10,
+    "DOC_ITEM_LABEL_GRADING_SCALE": 11,
+    "DOC_ITEM_LABEL_HANDWRITTEN_TEXT": 12,
+    "DOC_ITEM_LABEL_KEY_VALUE_REGION": 13,
+    "DOC_ITEM_LABEL_LIST_ITEM": 14,
+    "DOC_ITEM_LABEL_PAGE_FOOTER": 15,
+    "DOC_ITEM_LABEL_PAGE_HEADER": 16,
+    "DOC_ITEM_LABEL_PARAGRAPH": 17,
+    "DOC_ITEM_LABEL_PICTURE": 18,
+    "DOC_ITEM_LABEL_REFERENCE": 19,
+    "DOC_ITEM_LABEL_SECTION_HEADER": 20,
+    "DOC_ITEM_LABEL_TABLE": 21,
+    "DOC_ITEM_LABEL_TEXT": 22,
+    "DOC_ITEM_LABEL_TITLE": 23,
+    "DOC_ITEM_LABEL_FIELD_REGION": 24,
+    "DOC_ITEM_LABEL_FIELD_HEADING": 25,
+    "DOC_ITEM_LABEL_FIELD_ITEM": 26,
+    "DOC_ITEM_LABEL_FIELD_KEY": 27,
+    "DOC_ITEM_LABEL_FIELD_VALUE": 28,
+    "DOC_ITEM_LABEL_FIELD_HINT": 29,
+    "DOC_ITEM_LABEL_MARKER": 30,
+    "DOC_ITEM_LABEL_TRACK": 31,
+}
+
+# MEDIA_EXTENSIONS order. The tag is the extension; the mimetype is upstream's.
+_MEDIA_MIMETYPE_NUMBERS = {
+    "MEDIA_MIMETYPE_UNSPECIFIED": 0,
+    "MEDIA_MIMETYPE_MP3": 1,
+    "MEDIA_MIMETYPE_M4A": 2,
+    "MEDIA_MIMETYPE_AAC": 3,
+    "MEDIA_MIMETYPE_OGG": 4,
+    "MEDIA_MIMETYPE_WAV": 5,
+    "MEDIA_MIMETYPE_FLAC": 6,
+    "MEDIA_MIMETYPE_WMA": 7,
+    "MEDIA_MIMETYPE_AIFF": 8,
+    "MEDIA_MIMETYPE_MP4": 9,
+    "MEDIA_MIMETYPE_WEBM": 10,
+    "MEDIA_MIMETYPE_MKV": 11,
+    "MEDIA_MIMETYPE_MOV": 12,
+    "MEDIA_MIMETYPE_M4V": 13,
+    "MEDIA_MIMETYPE_WMV": 14,
+    "MEDIA_MIMETYPE_ASF": 15,
+    "MEDIA_MIMETYPE_AVI": 16,
+    "MEDIA_MIMETYPE_MPG": 17,
+    "MEDIA_MIMETYPE_FLV": 18,
+}
+
+_TRACK_ITEM_FIELD_NUMBERS = {
+    "self_ref": 1,
+    "parent": 2,
+    "children": 3,
+    "content_layer": 4,
+    "meta": 5,
+    "label": 6,
+    "prov": 7,
+    "captions": 8,
+    "references": 9,
+    "footnotes": 10,
+    "image": 11,
+    "source": 12,
+    "comments": 13,
+    "label_raw": 14,
+    "audio": 15,
+    "video": 16,
+}
+
+
+def test_schema_1_12_field_numbers_are_stable():
+    """Assigned numbers stay put. TRACK is appended, tracks is field 29."""
+    labels = pb2.DESCRIPTOR.enum_types_by_name["DocItemLabel"]
+    assert {value.name: value.number for value in labels.values} == _DOC_ITEM_LABEL_NUMBERS
+
+    mimetypes = pb2.DESCRIPTOR.enum_types_by_name["MediaMimetype"]
+    assert {value.name: value.number for value in mimetypes.values} == _MEDIA_MIMETYPE_NUMBERS
+    assert set(MEDIA_EXTENSIONS) == set(conversion._MEDIA_MIMETYPE_MAP)
+    for mimetype, extension in MEDIA_EXTENSIONS.items():
+        tag_name = f"MEDIA_MIMETYPE_{extension.upper()}"
+        assert conversion._MEDIA_MIMETYPE_MAP[mimetype] == _MEDIA_MIMETYPE_NUMBERS[tag_name]
+
+    media = pb2.DESCRIPTOR.message_types_by_name["MediaRef"]
+    assert {field.name: field.number for field in media.fields} == {
+        "mimetype": 1,
+        "url": 2,
+        "file_path": 3,
+    }
+    assert [field.name for field in media.oneofs_by_name["uri"].fields] == ["url", "file_path"]
+    assert not any(field.name.endswith("_raw") for field in media.fields)
+
+    track = pb2.DESCRIPTOR.message_types_by_name["TrackItem"]
+    assert {field.name: field.number for field in track.fields} == _TRACK_ITEM_FIELD_NUMBERS
+
+    document = pb2.DESCRIPTOR.message_types_by_name["DoclingDocument"]
+    assert document.fields_by_name["pictures"].number == 8
+    assert document.fields_by_name["field_items"].number == 15
+    assert document.fields_by_name["claims"].number == 28
+    assert document.fields_by_name["tracks"].number == 29
+    assert document.fields_by_name["version"].number == 2
+
+
+def _cover_image() -> ImageRef:
+    return ImageRef(
+        mimetype="image/png",
+        dpi=72,
+        size=Size(width=1.0, height=1.0),
+        uri=_PNG_DATA_URI,
+    )
+
+
+def _track_document() -> DoclingDocument:
+    """Audio-only, video-only, and both, with cues, a cover, and an instant."""
+    doc = DoclingDocument(name="tracks")
+    doc.pages = {1: PageItem(size=Size(width=100.0, height=200.0), page_no=1)}
+    prov = ProvenanceItem(
+        page_no=1,
+        bbox=BoundingBox(l=0, t=10, r=20, b=0),
+        charspan=(0, 4),
+    )
+    caption = doc.add_text(label=DocItemLabel.CAPTION, text="Cover")
+
+    audio = doc.add_track(
+        audio=MediaRef(mimetype="audio/mpeg", uri="https://example.com/talk.mp3"),
+        caption=caption,
+        prov=prov,
+        image=_cover_image(),
+    )
+    doc.add_text(
+        label=DocItemLabel.TEXT,
+        text="hello",
+        parent=audio,
+        source=TrackSource(start_time=0.0, end_time=1.5, voice="Ann", identifier="cue-1"),
+    )
+    instant = doc.add_text(
+        label=DocItemLabel.TEXT,
+        text="",
+        parent=audio,
+        source=TrackSource(start_time=4.0, end_time=4.0, identifier="instant"),
+    )
+    inline = doc.add_inline_group(parent=instant)
+    doc.add_text(label=DocItemLabel.TEXT, text="now", parent=inline)
+
+    doc.add_track(video=MediaRef(mimetype="video/mp4", uri=Path("clip.mp4")))
+    doc.add_text(
+        label=DocItemLabel.TEXT,
+        text="frame",
+        parent=doc.tracks[1],
+        source=TrackSource(start_time=0.0, end_time=0.0),
+    )
+
+    doc.add_track(
+        audio=MediaRef(mimetype="audio/wav", uri="file:///tmp/extra.wav"),
+        video=MediaRef(mimetype="video/webm", uri="https://example.com/clip.webm"),
+    )
+    return doc
+
+
+def test_track_document_round_trips_typed_media():
+    doc = _track_document()
+    assert doc.version == CURRENT_VERSION == "1.12.0"
+    proto = docling_document_to_proto(doc)
+    assert proto.version == "1.12.0"
+    assert len(proto.tracks) == 3
+
+    audio = proto.tracks[0]
+    assert audio.label == pb2.DOC_ITEM_LABEL_TRACK
+    assert audio.audio.mimetype == pb2.MEDIA_MIMETYPE_MP3
+    assert audio.audio.WhichOneof("uri") == "url"
+    assert audio.audio.url == "https://example.com/talk.mp3"
+    assert not audio.HasField("video")
+    assert len(audio.children) == 2
+    assert audio.captions[0].ref == doc.tracks[0].captions[0].cref
+    assert audio.prov[0].page_no == 1
+    assert audio.HasField("image")
+    cue = proto.texts[1].text.base
+    assert cue.source[0].track.start_time == 0.0
+    assert cue.source[0].track.end_time == 1.5
+    instant = proto.texts[2].text.base
+    assert instant.source[0].track.end_time == instant.source[0].track.start_time == 4.0
+    assert len(instant.children) == 1
+
+    video = proto.tracks[1]
+    assert not video.HasField("audio")
+    assert video.video.mimetype == pb2.MEDIA_MIMETYPE_MP4
+    assert video.video.WhichOneof("uri") == "file_path"
+    assert video.video.file_path == "clip.mp4"
+    origin = proto.texts[4].text.base.source[0].track
+    assert origin.start_time == 0.0
+    assert origin.end_time == 0.0
+
+    both = proto.tracks[2]
+    assert both.audio.mimetype == pb2.MEDIA_MIMETYPE_WAV
+    assert both.audio.WhichOneof("uri") == "url"
+    assert both.audio.url == "file:///tmp/extra.wav"
+    assert both.video.mimetype == pb2.MEDIA_MIMETYPE_WEBM
+    assert both.video.WhichOneof("uri") == "url"
+
+    roundtripped = _assert_round_trip(doc)
+    assert roundtripped.version == "1.12.0"
+    assert [type(item) for item in roundtripped.tracks] == [TrackItem, TrackItem, TrackItem]
+    audio_ref = roundtripped.tracks[0].audio
+    video_ref = roundtripped.tracks[1].video
+    file_url = roundtripped.tracks[2].audio
+    assert audio_ref is not None and isinstance(audio_ref.uri, AnyUrl)
+    assert video_ref is not None and isinstance(video_ref.uri, Path)
+    assert file_url is not None and isinstance(file_url.uri, AnyUrl)
+    assert file_url.uri.scheme == "file"
+    assert not isinstance(file_url.uri, Path)
+    audio_cues = [child.resolve(roundtripped) for child in roundtripped.tracks[0].children]
+    assert audio_cues[0].source[0].end_time == 1.5
+    assert audio_cues[1].source[0].start_time == audio_cues[1].source[0].end_time == 4.0
+    assert isinstance(audio_cues[1].children[0].resolve(roundtripped), InlineGroup)
+    origin_cue = roundtripped.tracks[1].children[0].resolve(roundtripped)
+    assert origin_cue.source[0].start_time == origin_cue.source[0].end_time == 0.0
+
+
+@pytest.mark.parametrize(
+    "audio,video",
+    [
+        (MediaRef(mimetype="audio/flac", uri="https://example.com/a.flac"), None),
+        (None, MediaRef(mimetype="video/quicktime", uri=Path("reel.mov"))),
+        (
+            MediaRef(mimetype="audio/ogg", uri=Path("talk.ogg")),
+            MediaRef(mimetype="video/x-matroska", uri="https://example.com/a.mkv"),
+        ),
+    ],
+)
+def test_track_media_combinations_round_trip(audio, video):
+    doc = DoclingDocument(name="one-track")
+    track = doc.add_track(audio=audio, video=video)
+    doc.add_text(
+        label=DocItemLabel.TEXT,
+        text="cue",
+        parent=track,
+        source=TrackSource(start_time=2.0, end_time=2.0),
+    )
+    roundtripped = _assert_round_trip(doc)
+    assert roundtripped.tracks[0].audio == audio
+    assert roundtripped.tracks[0].video == video
+    cue = roundtripped.texts[0]
+    assert cue.source[0].start_time == cue.source[0].end_time == 2.0
+    assert roundtripped.tracks[0].children[0].cref == cue.self_ref
+
+
+def test_empty_tracks_are_omitted():
+    doc = DoclingDocument(name="no-tracks")
+    assert doc.tracks == []
+    proto = docling_document_to_proto(doc)
+    assert proto.version == "1.12.0"
+    assert len(proto.tracks) == 0
+    roundtripped = _assert_round_trip(doc)
+    assert roundtripped.tracks == []
+    assert "tracks" not in doc.export_to_dict()
+    assert "tracks" not in roundtripped.export_to_dict()
+
+
+def test_media_ref_rejects_unknown_mimetype_and_kind():
+    with pytest.raises(ValidationError, match="Unsupported media type"):
+        MediaRef(mimetype="text/plain", uri=Path("a.txt"))
+    with pytest.raises(ValidationError, match="data: URIs"):
+        MediaRef(mimetype="audio/mpeg", uri="data:audio/mpeg;base64,AAAA")
+    with pytest.raises(ValidationError, match="Not an audio"):
+        TrackItem(
+            self_ref="#/tracks/0",
+            audio=MediaRef(mimetype="video/mp4", uri=Path("a.mp4")),
+        )
+    with pytest.raises(ValidationError, match="Not a video"):
+        TrackItem(
+            self_ref="#/tracks/0",
+            video=MediaRef(mimetype="audio/mpeg", uri=Path("a.mp3")),
+        )
+
+    bypassed = MediaRef.model_construct(mimetype="text/plain", uri=Path("a.txt"))
+    with pytest.raises(ValueError, match="Unsupported media type"):
+        conversion._to_media_ref(bypassed)
+
+    wrong_kind = TrackItem.model_construct(
+        self_ref="#/tracks/0",
+        label=DocItemLabel.TRACK,
+        audio=MediaRef(mimetype="video/mp4", uri=Path("a.mp4")),
+    )
+    with pytest.raises(ValueError, match="Not an audio media type"):
+        conversion._to_track_item(wrong_kind)
+    wrong_video = TrackItem.model_construct(
+        self_ref="#/tracks/0",
+        label=DocItemLabel.TRACK,
+        video=MediaRef(mimetype="audio/mpeg", uri="https://example.com/a.mp3"),
+    )
+    with pytest.raises(ValueError, match="Not a video media type"):
+        conversion._to_track_item(wrong_video)
+
+    unset = pb2.MediaRef(url="https://example.com/a.mp3")
+    with pytest.raises(ValueError, match="unset"):
+        conversion._from_media_ref(unset)
+    no_uri = pb2.MediaRef(mimetype=pb2.MEDIA_MIMETYPE_MP3)
+    with pytest.raises(ValueError, match="uri is unset"):
+        conversion._from_media_ref(no_uri)
+    unknown = pb2.MediaRef(mimetype=99, url="https://example.com/a.mp3")
+    with pytest.raises(ValueError, match="Unsupported media type"):
+        conversion._from_media_ref(unknown)
+    data_uri = pb2.MediaRef(mimetype=pb2.MEDIA_MIMETYPE_MP3, url="data:audio/mpeg;base64,AAAA")
+    with pytest.raises(ValidationError, match="data: URIs"):
+        conversion._from_media_ref(data_uri)
+
+    video_as_audio = pb2.TrackItem(
+        self_ref="#/tracks/0",
+        label=pb2.DOC_ITEM_LABEL_TRACK,
+        audio=pb2.MediaRef(mimetype=pb2.MEDIA_MIMETYPE_MP4, url="https://example.com/a.mp4"),
+    )
+    with pytest.raises(ValueError, match="Not an audio media type"):
+        conversion._from_track_item(video_as_audio)
+    audio_as_video = pb2.TrackItem(
+        self_ref="#/tracks/0",
+        label=pb2.DOC_ITEM_LABEL_TRACK,
+        video=pb2.MediaRef(mimetype=pb2.MEDIA_MIMETYPE_MP3, file_path="a.mp3"),
+    )
+    with pytest.raises(ValueError, match="Not a video media type"):
+        conversion._from_track_item(audio_as_video)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Generate Python protobuf code for the DoclingDocument proto (messages only, no gRPC services)."""
+
 import pathlib
 import subprocess
 import sys

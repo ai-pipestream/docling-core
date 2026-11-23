@@ -38,6 +38,8 @@ option java_package = "ai.docling.core.v1";
 // - Visual elements (pictures with AI-generated descriptions and annotations)
 // - Tabular data (tables with cell-level structure and annotations)
 // - Form data (key-value pairs, form fields)
+// - Media tracks (TrackItem, schema 1.12.0): a time-aligned transcript with
+//   optional audio and video MediaRef values
 // - Page metadata (size, images)
 // - Provenance tracking (bounding boxes, page numbers)
 
@@ -46,7 +48,11 @@ message DoclingDocument {
   // Schema identifier for versioning (e.g., "docling_document_v2")
   optional string schema_name = 1;
 
-  // Version number of the Docling schema used
+  // Version number of the Docling schema used. This string is the pydantic
+  // model's CURRENT_VERSION. Schema 1.11.0 carried inline-run whitespace.
+  // Schema 1.12.0 (docling-core v2.108.0) adds TrackItem, the tracks list,
+  // DocItemLabel.TRACK, and TrackSource instants. There is no parallel
+  // version enum on the wire.
   optional string version = 2;
 
   // Human-readable name or title of the document
@@ -90,9 +96,11 @@ message DoclingDocument {
   // Map of page numbers to page metadata.
   map<int32, PageItem> pages = 12;
 
-  // Fields 16 and up extend the wire schema beyond the Docling dialect;
+  // Fields 16 through 28 extend the wire schema beyond the Docling dialect;
   // the Pydantic model has no slot for them and the reverse converter
-  // absorbs them.
+  // absorbs them. Schema 1.12.0 appends the dialect list `tracks` at 29.
+  // Those extension numbers stay where they are: a Docling addition never
+  // renumbers an assigned field.
 
   // Source-declared document metadata (title, authors, dates, language).
   optional DocumentMeta source_meta = 16;
@@ -140,6 +148,10 @@ message DoclingDocument {
   // the loser's answer is here, under its collector, not lost. Extension
   // beyond the Docling dialect.
   repeated CollectorClaim claims = 28;
+
+  // Time-aligned media transcripts (schema 1.12.0). Empty on the model is
+  // omitted from JSON and stays an empty repeated field here.
+  repeated TrackItem tracks = 29;
 }
 
 // DocumentOrigin contains metadata about the source document file.
@@ -252,6 +264,10 @@ message FineRef {
 // On the wire, that role is played by the parent `SourceType` oneof tag:
 // selecting `track` already identifies the variant. We deliberately omit a
 // redundant `kind` string field here.
+//
+// Schema 1.12.0 allows an instant: end_time equal to start_time. An earlier
+// end_time is rejected by the model. Both doubles are always written,
+// including 0, so an instant at the origin round-trips.
 message TrackSource {
   double start_time = 1;
   double end_time = 2;
@@ -414,6 +430,8 @@ enum DocItemLabel {
   DOC_ITEM_LABEL_FIELD_VALUE = 28;
   DOC_ITEM_LABEL_FIELD_HINT = 29;
   DOC_ITEM_LABEL_MARKER = 30;
+  // Schema 1.12.0. Append-only: existing tags stay on their numbers.
+  DOC_ITEM_LABEL_TRACK = 31;
 }
 
 // Script defines the vertical positioning of text.
@@ -927,6 +945,45 @@ message Size {
   double height = 2;
 }
 
+// MediaMimetype is the closed MEDIA_EXTENSIONS set. Each tag is the archive
+// extension upstream pairs with one mimetype. Unknown values are rejected
+// by the model, so this enum has no *_raw companion.
+enum MediaMimetype {
+  MEDIA_MIMETYPE_UNSPECIFIED = 0;
+  MEDIA_MIMETYPE_MP3 = 1;    // audio/mpeg
+  MEDIA_MIMETYPE_M4A = 2;    // audio/mp4
+  MEDIA_MIMETYPE_AAC = 3;    // audio/aac
+  MEDIA_MIMETYPE_OGG = 4;    // audio/ogg
+  MEDIA_MIMETYPE_WAV = 5;    // audio/wav
+  MEDIA_MIMETYPE_FLAC = 6;   // audio/flac
+  MEDIA_MIMETYPE_WMA = 7;    // audio/x-ms-wma
+  MEDIA_MIMETYPE_AIFF = 8;   // audio/x-aiff
+  MEDIA_MIMETYPE_MP4 = 9;    // video/mp4
+  MEDIA_MIMETYPE_WEBM = 10;  // video/webm
+  MEDIA_MIMETYPE_MKV = 11;   // video/x-matroska
+  MEDIA_MIMETYPE_MOV = 12;   // video/quicktime
+  MEDIA_MIMETYPE_M4V = 13;   // video/x-m4v
+  MEDIA_MIMETYPE_WMV = 14;   // video/x-ms-wmv
+  MEDIA_MIMETYPE_ASF = 15;   // video/x-ms-asf
+  MEDIA_MIMETYPE_AVI = 16;   // video/x-msvideo
+  MEDIA_MIMETYPE_MPG = 17;   // video/mpeg
+  MEDIA_MIMETYPE_FLV = 18;   // video/x-flv
+}
+
+// MediaRef references an audio or video recording.
+//
+// `uri` matches `AnyUrl | Path`: a URL (including file://) is `url`, a
+// filesystem path is `file_path`. The converter does not coerce one into
+// the other. `mimetype` is MediaMimetype. An unset mimetype or an unset
+// uri is an error, not a default.
+message MediaRef {
+  MediaMimetype mimetype = 1;
+  oneof uri {
+    string url = 2;
+    string file_path = 3;
+  }
+}
+
 // ============================================================================
 // Annotation types
 // ============================================================================
@@ -1406,6 +1463,33 @@ message FieldItem {
   optional FineRef span = 13;
   // Fieldmark parameters, a genuinely open per-field vocabulary.
   map<string, string> parameters = 14;
+}
+
+// TrackItem is a time-aligned media transcript (schema 1.12.0).
+//
+// It carries the FloatingItem fields (image, captions, references, footnotes,
+// provenance, children, source, comments, meta) plus the recording the cue
+// times refer to. `audio` must be an audio/* MediaRef and `video` a
+// video/* MediaRef. The converter rejects a violation. A video covers its
+// own sound; both are set only for separate files. Children are the cues.
+message TrackItem {
+  string self_ref = 1;
+  optional RefItem parent = 2;
+  repeated RefItem children = 3;
+  ContentLayer content_layer = 4;
+  optional FloatingMeta meta = 5;
+  DocItemLabel label = 6;
+  repeated ProvenanceItem prov = 7;
+  repeated RefItem captions = 8;
+  repeated RefItem references = 9;
+  repeated RefItem footnotes = 10;
+  optional ImageRef image = 11;
+  repeated SourceType source = 12;
+  repeated FineRef comments = 13;
+  // Raw label fallback for forward-compatibility with newer label vocabularies.
+  optional string label_raw = 14;
+  optional MediaRef audio = 15;
+  optional MediaRef video = 16;
 }
 
 // PageItem represents metadata about a single page in the document.

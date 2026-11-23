@@ -21,6 +21,8 @@ This document explains how `DoclingDocument` parity is maintained between:
 | `TableData.grid` (and `*.chart_data.grid`)                                                                          | computed-field surfaced       | Pydantic `TableData.grid` is a `@computed_field` — derived from `table_cells` + cell row/col offsets. It IS in the Pydantic JSON dump, so proto surfaces it for parity. Not a divergence; the validator allowlists it because it doesn't appear in `model_fields`.                                                                                | intentional |
 | `TrackSource.kind` (Pydantic-side only)                                                                             | discriminator absorbed        | Pydantic discriminated unions need a per-variant `kind: Literal[...]` field. Proto encodes the same information in the parent oneof tag (`SourceType.source.track`), so the per-variant string field is redundant on the wire.                                                                                                                    | intentional |
 | `CodeItem` proto inlines `TextItemBase` fields instead of using `base = 1`                                          | inheritance-without-shadowing | All other text variants wrap a `TextItemBase base = 1` for shared fields. CodeItem is the only Pydantic text variant that overrides `meta` (FloatingMeta vs BaseMeta). Wrapping would surface two `meta` slots on the wire (`base.meta` AND `meta`) with no schema rule for which to populate. Inlining keeps a single, unambiguous `meta` field. | intentional |
+| `MediaRef.mimetype`                                                                                                 | no `*_raw` companion          | `MEDIA_EXTENSIONS` is a closed set. Upstream `MediaRef` rejects every other mimetype, so an unset or unknown `MediaMimetype` tag is an error. There is nothing to carry in a raw string. | intentional |
+| `MediaRef.uri`                                                                                                      | oneof `url` / `file_path`     | The pydantic type is `AnyUrl \| Path`. The oneof arm is that type: a URL, including `file://`, stays `url`, and a filesystem path stays `file_path`. The converter does not coerce one into the other. | intentional |
 
 
 Only fields matching a pattern listed here are allowed to differ intentionally. New `*_raw` patterns must be added to this table *and* registered in `_RAW_FALLBACK_SUFFIXES` in `docling_serve/grpc/schema_validator.py`. New discriminator-only fields must be registered in `_PYDANTIC_ONLY_DISCRIMINATORS` in the same file.
@@ -204,6 +206,31 @@ The rules match `picture_custom_fields` in the canonical renderer
 The wire never carries an untyped copy of this data. Both sides synthesize the
 custom field from the typed arm, which is what keeps them byte-equal.
 
+## Schema 1.12.0
+
+`DoclingDocument.version` stays the pydantic `CURRENT_VERSION` string. Schema
+1.11.0 and 1.12.0 use that same field. There is no parallel version enum.
+
+Schema 1.12.0 (docling-core v2.108.0) adds mapped fields, not extensions:
+
+- `DocItemLabel.TRACK` is tag 31, appended after `MARKER` = 30.
+- `DoclingDocument.tracks` is field 29, a repeated `TrackItem`. Fields 16
+  through 28 were already the extension block, so the dialect list is
+  appended after them. Those numbers are not renumbered.
+- `TrackItem` carries the FloatingItem fields (`image`, `captions`,
+  `references`, `footnotes`, `prov`, `children`, `source`, `comments`,
+  `meta`) plus optional `audio` and `video` `MediaRef` values. `audio` must
+  be `audio/*` and `video` must be `video/*`. Either direction of the
+  converter raises `ValueError` on a violation.
+- `MediaRef.mimetype` is `MediaMimetype`, one tag per `MEDIA_EXTENSIONS`
+  entry, in that dict's order, mapped to the mimetype upstream pairs with
+  the extension. No `mimetype_raw`.
+- `TrackSource` instants (`end_time == start_time`, including the origin)
+  round-trip on the existing doubles. Both values are always written.
+
+An empty `tracks` list is omitted from `export_to_dict()` and stays an empty
+repeated field on the wire.
+
 ## Enforcement
 
 - Conversion logic: `docling_core/utils/conversion.py` — both directions:
@@ -249,7 +276,7 @@ custom field from the typed arm, which is what keeps them byte-equal.
     `pipestream__barcodes` projection fixtured as a JSON fragment so a change
     in key order or key set fails, descriptor-level tests pin the field
     numbers and presence rules the canonical schema chose, and a descriptor
-    identity test pins the inventory (141 messages, 14 enums, 749 fields)
+    identity test pins the inventory (143 messages, 15 enums, 769 fields)
     and, when `DOCLING_WIRE_SCHEMA_PROTO` points at the canonical
     `document.proto`, compiles it and compares the two descriptors message
     by message and field by field.

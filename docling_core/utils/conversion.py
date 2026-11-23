@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import warnings
 from enum import Enum
+from pathlib import Path
 from typing import Any, Optional
 
 from google.protobuf import struct_pb2
+from pydantic import AnyUrl
 
+from docling_core.proto.gen.ai.docling.core.v1 import docling_document_pb2 as pb2
 from docling_core.types.doc.base import CoordOrigin
+from docling_core.types.doc.common.reference import MEDIA_EXTENSIONS
 from docling_core.types.doc.document import (
     BaseMeta,
     BaseSource,
@@ -18,6 +22,8 @@ from docling_core.types.doc.document import (
     DescriptionMetaField,
     DoclingDocument,
     DocumentOrigin,
+    EntitiesMetaField,
+    EntityMention,
     FieldHeadingItem,
     FieldItem,
     FieldRegionItem,
@@ -32,10 +38,16 @@ from docling_core.types.doc.document import (
     GraphLink,
     GroupItem,
     ImageRef,
+    InlineGroup,
     KeyValueItem,
+    KeywordsMetaField,
+    LanguageMetaField,
+    ListGroup,
     ListItem,
+    MediaRef,
     MiscAnnotation,
     MoleculeMetaField,
+    Orientation,
     PageItem,
     PictureBarChartData,
     PictureClassificationClass,
@@ -57,31 +69,24 @@ from docling_core.types.doc.document import (
     SectionHeaderItem,
     Size,
     SummaryMetaField,
-    LanguageMetaField,
-    EntitiesMetaField,
-    KeywordsMetaField,
-    TopicsMetaField,
-    EntityMention,
     TableCell,
     TableData,
     TableItem,
-    Orientation,
     TabularChartMetaField,
-    InlineGroup,
-    ListGroup,
     TextItem,
     TitleItem,
+    TopicsMetaField,
+    TrackItem,
     TrackSource,
 )
 from docling_core.types.doc.labels import (
     CodeLanguageLabel,
     DocItemLabel,
-    HumanLanguageLabel,
     GraphCellLabel,
     GraphLinkLabel,
     GroupLabel,
+    HumanLanguageLabel,
 )
-from docling_core.proto.gen.ai.docling.core.v1 import docling_document_pb2 as pb2
 
 
 def _enum_value(value: Enum | str | None, mapping: dict[str, int], default: int) -> int:
@@ -148,12 +153,56 @@ _DOC_ITEM_LABEL_MAP = {
     DocItemLabel.FIELD_VALUE.value: pb2.DOC_ITEM_LABEL_FIELD_VALUE,
     DocItemLabel.FIELD_HINT.value: pb2.DOC_ITEM_LABEL_FIELD_HINT,
     DocItemLabel.MARKER.value: pb2.DOC_ITEM_LABEL_MARKER,
+    DocItemLabel.TRACK.value: pb2.DOC_ITEM_LABEL_TRACK,
 }
+
+# Extension tag -> proto enum, in MEDIA_EXTENSIONS order. The mimetype strings
+# themselves come from MEDIA_EXTENSIONS so the wire map cannot drift from the
+# closed set the model accepts.
+_MEDIA_MIMETYPE_BY_EXTENSION = {
+    "mp3": pb2.MEDIA_MIMETYPE_MP3,
+    "m4a": pb2.MEDIA_MIMETYPE_M4A,
+    "aac": pb2.MEDIA_MIMETYPE_AAC,
+    "ogg": pb2.MEDIA_MIMETYPE_OGG,
+    "wav": pb2.MEDIA_MIMETYPE_WAV,
+    "flac": pb2.MEDIA_MIMETYPE_FLAC,
+    "wma": pb2.MEDIA_MIMETYPE_WMA,
+    "aiff": pb2.MEDIA_MIMETYPE_AIFF,
+    "mp4": pb2.MEDIA_MIMETYPE_MP4,
+    "webm": pb2.MEDIA_MIMETYPE_WEBM,
+    "mkv": pb2.MEDIA_MIMETYPE_MKV,
+    "mov": pb2.MEDIA_MIMETYPE_MOV,
+    "m4v": pb2.MEDIA_MIMETYPE_M4V,
+    "wmv": pb2.MEDIA_MIMETYPE_WMV,
+    "asf": pb2.MEDIA_MIMETYPE_ASF,
+    "avi": pb2.MEDIA_MIMETYPE_AVI,
+    "mpg": pb2.MEDIA_MIMETYPE_MPG,
+    "flv": pb2.MEDIA_MIMETYPE_FLV,
+}
+
+
+def _build_media_mimetype_map() -> dict[str, int]:
+    mapping: dict[str, int] = {}
+    for mimetype, extension in MEDIA_EXTENSIONS.items():
+        try:
+            enum_val = _MEDIA_MIMETYPE_BY_EXTENSION[extension]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"MEDIA_EXTENSIONS extension {extension!r} ({mimetype}) has no MediaMimetype tag"
+            ) from exc
+        mapping[mimetype] = enum_val
+    extra = set(_MEDIA_MIMETYPE_BY_EXTENSION) - set(MEDIA_EXTENSIONS.values())
+    if extra:
+        raise RuntimeError(f"MediaMimetype tags without a MEDIA_EXTENSIONS entry: {sorted(extra)}")
+    return mapping
+
+
+_MEDIA_MIMETYPE_MAP = _build_media_mimetype_map()
 
 
 def _to_doc_item_label_enum_and_raw(
     value: Enum | str | None,
-) -> tuple[int, Optional[str]]:
+) -> tuple[int, str | None]:
     if value is None:
         return pb2.DOC_ITEM_LABEL_UNSPECIFIED, None
     key = value.value if isinstance(value, Enum) else str(value)
@@ -165,7 +214,7 @@ def _to_doc_item_label_enum_and_raw(
 
 def _to_code_language_enum_and_raw(
     value: Enum | str | None,
-) -> tuple[int, Optional[str]]:
+) -> tuple[int, str | None]:
     if value is None:
         return pb2.CODE_LANGUAGE_LABEL_UNSPECIFIED, None
     key = value.value if isinstance(value, Enum) else str(value)
@@ -173,6 +222,7 @@ def _to_code_language_enum_and_raw(
     if enum_val is None:
         return pb2.CODE_LANGUAGE_LABEL_UNSPECIFIED, str(key)
     return enum_val, None
+
 
 _SCRIPT_MAP = {
     Script.BASELINE.value: pb2.SCRIPT_BASELINE,
@@ -210,7 +260,7 @@ _ORIENTATION_MAP = {
 
 def _to_orientation_enum_and_raw(
     value: Enum | str | None,
-) -> tuple[int, Optional[str]]:
+) -> tuple[int, str | None]:
     if value is None:
         return pb2.ORIENTATION_UNSPECIFIED, None
     key = value.value if isinstance(value, Enum) else str(value)
@@ -218,6 +268,7 @@ def _to_orientation_enum_and_raw(
     if enum_val is None:
         return pb2.ORIENTATION_UNSPECIFIED, str(key)
     return enum_val, None
+
 
 _CODE_LANGUAGE_MAP = {
     CodeLanguageLabel.ADA.value: pb2.CODE_LANGUAGE_LABEL_ADA,
@@ -282,7 +333,6 @@ _CODE_LANGUAGE_MAP = {
     CodeLanguageLabel.TIKZ.value: pb2.CODE_LANGUAGE_LABEL_TIKZ,
     CodeLanguageLabel.DOCLANG.value: pb2.CODE_LANGUAGE_LABEL_DOCLANG,
 }
-
 
 
 _HUMAN_LANGUAGE_MAP = {
@@ -476,7 +526,7 @@ _HUMAN_LANGUAGE_MAP = {
 
 def _to_human_language_enum_and_raw(
     value: Enum | str | None,
-) -> tuple[int, Optional[str]]:
+) -> tuple[int, str | None]:
     if value is None:
         return pb2.HUMAN_LANGUAGE_LABEL_UNSPECIFIED, None
     key = value.value if isinstance(value, Enum) else str(value)
@@ -485,7 +535,8 @@ def _to_human_language_enum_and_raw(
         return pb2.HUMAN_LANGUAGE_LABEL_UNSPECIFIED, str(key)
     return enum_val, None
 
-def _to_ref(ref: Optional[RefItem]) -> Optional[pb2.RefItem]:
+
+def _to_ref(ref: RefItem | None) -> pb2.RefItem | None:
     if ref is None:
         return None
     return pb2.RefItem(ref=ref.cref)
@@ -560,7 +611,6 @@ def _to_source_type(source: BaseSource) -> pb2.SourceType:
     return msg
 
 
-
 def _to_language_meta(meta: LanguageMetaField) -> pb2.LanguageMetaField:
     enum_val, raw = _to_human_language_enum_and_raw(meta.code)
     msg = pb2.LanguageMetaField(code=enum_val)
@@ -581,9 +631,7 @@ def _to_entity_mention(mention: EntityMention) -> pb2.EntityMention:
     if mention.label is not None:
         msg.label = mention.label
     if mention.charspan is not None:
-        msg.charspan.CopyFrom(
-            pb2.IntSpan(start=int(mention.charspan[0]), end=int(mention.charspan[1]))
-        )
+        msg.charspan.CopyFrom(pb2.IntSpan(start=int(mention.charspan[0]), end=int(mention.charspan[1])))
     if mention.confidence is not None:
         msg.confidence = mention.confidence
     if mention.created_by is not None:
@@ -625,6 +673,7 @@ def _apply_inherited_meta_fields(msg: Any, meta: BaseMeta) -> None:
     if meta.topics is not None:
         msg.topics.CopyFrom(_to_topics_meta(meta.topics))
 
+
 def _to_summary_meta(meta: SummaryMetaField) -> pb2.SummaryMetaField:
     msg = pb2.SummaryMetaField(text=meta.text)
     if meta.confidence is not None:
@@ -635,7 +684,7 @@ def _to_summary_meta(meta: SummaryMetaField) -> pb2.SummaryMetaField:
     return msg
 
 
-def _to_base_meta(meta: Optional[BaseMeta]) -> Optional[pb2.BaseMeta]:
+def _to_base_meta(meta: BaseMeta | None) -> pb2.BaseMeta | None:
     if meta is None:
         return None
     if (
@@ -679,9 +728,7 @@ def _to_picture_classification_meta(
     meta: PictureClassificationMetaField,
 ) -> pb2.PictureClassificationMetaField:
     msg = pb2.PictureClassificationMetaField()
-    msg.predictions.extend(
-        [_to_picture_classification_prediction(p) for p in meta.predictions]
-    )
+    msg.predictions.extend([_to_picture_classification_prediction(p) for p in meta.predictions])
     _apply_custom_fields(msg, meta)
     return msg
 
@@ -722,7 +769,7 @@ def _to_code_meta(meta: CodeMetaField) -> pb2.CodeMetaField:
     return msg
 
 
-def _to_floating_meta(meta: Optional[FloatingMeta]) -> Optional[pb2.FloatingMeta]:
+def _to_floating_meta(meta: FloatingMeta | None) -> pb2.FloatingMeta | None:
     if meta is None:
         return None
     msg = pb2.FloatingMeta()
@@ -733,7 +780,7 @@ def _to_floating_meta(meta: Optional[FloatingMeta]) -> Optional[pb2.FloatingMeta
     return msg
 
 
-def _to_picture_meta(meta: Optional[PictureMeta]) -> Optional[pb2.PictureMeta]:
+def _to_picture_meta(meta: PictureMeta | None) -> pb2.PictureMeta | None:
     if meta is None:
         return None
     msg = pb2.PictureMeta()
@@ -741,9 +788,7 @@ def _to_picture_meta(meta: Optional[PictureMeta]) -> Optional[pb2.PictureMeta]:
     if meta.description is not None:
         msg.description.CopyFrom(_to_description_meta(meta.description))
     if meta.classification is not None:
-        msg.classification.CopyFrom(
-            _to_picture_classification_meta(meta.classification)
-        )
+        msg.classification.CopyFrom(_to_picture_classification_meta(meta.classification))
     if meta.molecule is not None:
         msg.molecule.CopyFrom(_to_molecule_meta(meta.molecule))
     if meta.tabular_chart is not None:
@@ -804,9 +849,7 @@ def _to_picture_annotation(annotation) -> pb2.PictureAnnotation:
             provenance=annotation.provenance,
         )
         if annotation.segmentation:
-            mol.segmentation.extend(
-                [_to_float_pair(p) for p in annotation.segmentation]
-            )
+            mol.segmentation.extend([_to_float_pair(p) for p in annotation.segmentation])
         msg.molecule.CopyFrom(mol)
     elif isinstance(annotation, PictureTabularChartData):
         msg.tabular_chart.CopyFrom(
@@ -839,10 +882,7 @@ def _to_picture_annotation(annotation) -> pb2.PictureAnnotation:
                 title=annotation.title,
                 x_axis_label=annotation.x_axis_label,
                 y_axis_label=annotation.y_axis_label,
-                bars=[
-                    pb2.ChartBar(label=bar.label, values=bar.values)
-                    for bar in annotation.bars
-                ],
+                bars=[pb2.ChartBar(label=bar.label, values=bar.values) for bar in annotation.bars],
             )
         )
     elif isinstance(annotation, PictureStackedBarChartData):
@@ -866,10 +906,7 @@ def _to_picture_annotation(annotation) -> pb2.PictureAnnotation:
             pb2.PicturePieChartData(
                 kind=annotation.kind,
                 title=annotation.title,
-                slices=[
-                    pb2.ChartSlice(label=s.label, value=s.value)
-                    for s in annotation.slices
-                ],
+                slices=[pb2.ChartSlice(label=s.label, value=s.value) for s in annotation.slices],
             )
         )
     elif isinstance(annotation, PictureScatterChartData):
@@ -879,10 +916,7 @@ def _to_picture_annotation(annotation) -> pb2.PictureAnnotation:
                 title=annotation.title,
                 x_axis_label=annotation.x_axis_label,
                 y_axis_label=annotation.y_axis_label,
-                points=[
-                    pb2.ChartPoint(value=_to_float_pair(p.value))
-                    for p in annotation.points
-                ],
+                points=[pb2.ChartPoint(value=_to_float_pair(p.value)) for p in annotation.points],
             )
         )
     else:
@@ -915,7 +949,7 @@ def _to_table_annotation(annotation) -> pb2.TableAnnotation:
 
 
 def _annotations_from_floating_meta(
-    meta: Optional[FloatingMeta],
+    meta: FloatingMeta | None,
 ) -> list[DescriptionAnnotation]:
     """Build table annotation list from meta (avoids deprecated item.annotations)."""
     if meta is None:
@@ -933,22 +967,12 @@ def _annotations_from_floating_meta(
 
 
 def _annotations_from_picture_meta(
-    meta: Optional[PictureMeta],
-) -> list[
-    DescriptionAnnotation
-    | PictureClassificationData
-    | PictureMoleculeData
-    | PictureTabularChartData
-]:
+    meta: PictureMeta | None,
+) -> list[DescriptionAnnotation | PictureClassificationData | PictureMoleculeData | PictureTabularChartData]:
     """Build picture annotation list from meta (avoids deprecated item.annotations)."""
     if meta is None:
         return []
-    out: list[
-        DescriptionAnnotation
-        | PictureClassificationData
-        | PictureMoleculeData
-        | PictureTabularChartData
-    ] = []
+    out: list[DescriptionAnnotation | PictureClassificationData | PictureMoleculeData | PictureTabularChartData] = []
     if meta.description is not None:
         out.append(
             DescriptionAnnotation(
@@ -993,7 +1017,7 @@ def _annotations_from_picture_meta(
     return out
 
 
-def _to_formatting(fmt: Optional[Formatting]) -> Optional[pb2.Formatting]:
+def _to_formatting(fmt: Formatting | None) -> pb2.Formatting | None:
     if fmt is None:
         return None
     msg = pb2.Formatting(
@@ -1013,16 +1037,12 @@ def _to_formatting(fmt: Optional[Formatting]) -> Optional[pb2.Formatting]:
     return msg
 
 
-def _to_bbox(bbox: Optional[BoundingBox]) -> Optional[pb2.BoundingBox]:
+def _to_bbox(bbox: BoundingBox | None) -> pb2.BoundingBox | None:
     if bbox is None:
         return None
     msg = pb2.BoundingBox(l=bbox.l, t=bbox.t, r=bbox.r, b=bbox.b)
     if bbox.coord_origin is not None:
-        key = (
-            bbox.coord_origin.value
-            if isinstance(bbox.coord_origin, Enum)
-            else str(bbox.coord_origin)
-        )
+        key = bbox.coord_origin.value if isinstance(bbox.coord_origin, Enum) else str(bbox.coord_origin)
         enum_val = _COORD_ORIGIN_MAP.get(str(key))
         if enum_val is None:
             msg.coord_origin = pb2.COORD_ORIGIN_UNSPECIFIED
@@ -1036,7 +1056,7 @@ def _to_size(size: Size) -> pb2.Size:
     return pb2.Size(width=size.width, height=size.height)
 
 
-def _to_image_ref(image: Optional[ImageRef]) -> Optional[pb2.ImageRef]:
+def _to_image_ref(image: ImageRef | None) -> pb2.ImageRef | None:
     if image is None:
         return None
     msg = pb2.ImageRef(
@@ -1048,24 +1068,47 @@ def _to_image_ref(image: Optional[ImageRef]) -> Optional[pb2.ImageRef]:
     return msg
 
 
+def _require_media_kind(ref: MediaRef | None, prefix: str) -> None:
+    """Reject a MediaRef whose mimetype is not the kind the slot requires.
+
+    Matches TrackItem's validators: audio/* on `audio`, video/* on `video`.
+    """
+    if ref is None or ref.mimetype.startswith(prefix):
+        return
+    if prefix == "audio/":
+        raise ValueError(f"Not an audio media type: {ref.mimetype!r}")
+    if prefix == "video/":
+        raise ValueError(f"Not a video media type: {ref.mimetype!r}")
+    raise ValueError(f"Not a {prefix} media type: {ref.mimetype!r}")
+
+
+def _to_media_ref(ref: MediaRef) -> pb2.MediaRef:
+    enum_val = _MEDIA_MIMETYPE_MAP.get(ref.mimetype)
+    if enum_val is None:
+        raise ValueError(f"Unsupported media type: {ref.mimetype!r}")
+    msg = pb2.MediaRef(mimetype=enum_val)
+    uri = ref.uri
+    if isinstance(uri, Path):
+        msg.file_path = str(uri)
+    elif isinstance(uri, AnyUrl):
+        msg.url = str(uri)
+    else:
+        raise TypeError(f"MediaRef.uri must be AnyUrl or Path, got {type(uri).__name__}")
+    return msg
+
+
 def _to_provenance_item(prov: ProvenanceItem) -> pb2.ProvenanceItem:
     msg = pb2.ProvenanceItem(page_no=prov.page_no)
     msg.bbox.CopyFrom(_to_bbox(prov.bbox))
-    msg.charspan.CopyFrom(
-        pb2.IntSpan(start=int(prov.charspan[0]), end=int(prov.charspan[1]))
-    )
+    msg.charspan.CopyFrom(pb2.IntSpan(start=int(prov.charspan[0]), end=int(prov.charspan[1])))
     return msg
 
 
 def _to_text_item_base(item: TextItem) -> pb2.TextItemBase:
     msg = pb2.TextItemBase(
         self_ref=item.self_ref,
-        content_layer=_enum_value(
-            item.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED
-        ),
-        label=_enum_value(
-            item.label, _DOC_ITEM_LABEL_MAP, pb2.DOC_ITEM_LABEL_UNSPECIFIED
-        ),
+        content_layer=_enum_value(item.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED),
+        label=_enum_value(item.label, _DOC_ITEM_LABEL_MAP, pb2.DOC_ITEM_LABEL_UNSPECIFIED),
         orig=item.orig,
         text=item.text,
     )
@@ -1116,12 +1159,8 @@ def _to_list_item(item: ListItem) -> pb2.ListItem:
 def _to_code_item(item: CodeItem) -> pb2.CodeItem:
     msg = pb2.CodeItem(
         self_ref=item.self_ref,
-        content_layer=_enum_value(
-            item.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED
-        ),
-        label=_enum_value(
-            item.label, _DOC_ITEM_LABEL_MAP, pb2.DOC_ITEM_LABEL_UNSPECIFIED
-        ),
+        content_layer=_enum_value(item.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED),
+        label=_enum_value(item.label, _DOC_ITEM_LABEL_MAP, pb2.DOC_ITEM_LABEL_UNSPECIFIED),
         orig=item.orig,
         text=item.text,
     )
@@ -1233,9 +1272,7 @@ def _to_table_item_base(item: TableItem) -> pb2.TableItem:
     label_enum, label_raw = _to_doc_item_label_enum_and_raw(item.label)
     msg = pb2.TableItem(
         self_ref=item.self_ref,
-        content_layer=_enum_value(
-            item.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED
-        ),
+        content_layer=_enum_value(item.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED),
         label=label_enum,
     )
     if label_raw is not None:
@@ -1277,9 +1314,7 @@ def _to_picture_item(item: PictureItem) -> pb2.PictureItem:
     label_enum, label_raw = _to_doc_item_label_enum_and_raw(item.label)
     msg = pb2.PictureItem(
         self_ref=item.self_ref,
-        content_layer=_enum_value(
-            item.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED
-        ),
+        content_layer=_enum_value(item.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED),
         label=label_enum,
     )
     if label_raw is not None:
@@ -1311,11 +1346,49 @@ def _to_picture_item(item: PictureItem) -> pb2.PictureItem:
     return msg
 
 
+def _to_track_item(item: TrackItem) -> pb2.TrackItem:
+    _require_media_kind(item.audio, "audio/")
+    _require_media_kind(item.video, "video/")
+    label_enum, label_raw = _to_doc_item_label_enum_and_raw(item.label)
+    msg = pb2.TrackItem(
+        self_ref=item.self_ref,
+        content_layer=_enum_value(item.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED),
+        label=label_enum,
+    )
+    if label_raw is not None:
+        msg.label_raw = label_raw
+    if item.parent is not None:
+        msg.parent.CopyFrom(_to_ref(item.parent))
+    if item.children:
+        msg.children.extend([_to_ref(ref) for ref in item.children])
+    meta = _to_floating_meta(item.meta)
+    if meta is not None:
+        msg.meta.CopyFrom(meta)
+    if item.prov:
+        msg.prov.extend([_to_provenance_item(p) for p in item.prov])
+    if item.source:
+        msg.source.extend([_to_source_type(src) for src in item.source])
+    if item.comments:
+        msg.comments.extend([_to_fine_ref(ref) for ref in item.comments])
+    if item.captions:
+        msg.captions.extend([_to_ref(ref) for ref in item.captions])
+    if item.references:
+        msg.references.extend([_to_ref(ref) for ref in item.references])
+    if item.footnotes:
+        msg.footnotes.extend([_to_ref(ref) for ref in item.footnotes])
+    image = _to_image_ref(item.image)
+    if image is not None:
+        msg.image.CopyFrom(image)
+    if item.audio is not None:
+        msg.audio.CopyFrom(_to_media_ref(item.audio))
+    if item.video is not None:
+        msg.video.CopyFrom(_to_media_ref(item.video))
+    return msg
+
+
 def _to_graph_cell(cell: GraphCell) -> pb2.GraphCell:
     msg = pb2.GraphCell(
-        label=_enum_value(
-            cell.label, _GRAPH_CELL_LABEL_MAP, pb2.GRAPH_CELL_LABEL_UNSPECIFIED
-        ),
+        label=_enum_value(cell.label, _GRAPH_CELL_LABEL_MAP, pb2.GRAPH_CELL_LABEL_UNSPECIFIED),
         cell_id=cell.cell_id,
         text=cell.text,
         orig=cell.orig,
@@ -1329,9 +1402,7 @@ def _to_graph_cell(cell: GraphCell) -> pb2.GraphCell:
 
 def _to_graph_link(link: GraphLink) -> pb2.GraphLink:
     msg = pb2.GraphLink(
-        label=_enum_value(
-            link.label, _GRAPH_LINK_LABEL_MAP, pb2.GRAPH_LINK_LABEL_UNSPECIFIED
-        ),
+        label=_enum_value(link.label, _GRAPH_LINK_LABEL_MAP, pb2.GRAPH_LINK_LABEL_UNSPECIFIED),
         source_cell_id=link.source_cell_id,
         target_cell_id=link.target_cell_id,
     )
@@ -1351,9 +1422,7 @@ def _to_key_value_item(item: KeyValueItem) -> pb2.KeyValueItem:
     label_enum, label_raw = _to_doc_item_label_enum_and_raw(item.label)
     msg = pb2.KeyValueItem(
         self_ref=item.self_ref,
-        content_layer=_enum_value(
-            item.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED
-        ),
+        content_layer=_enum_value(item.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED),
         label=label_enum,
     )
     if label_raw is not None:
@@ -1388,9 +1457,7 @@ def _to_form_item(item: FormItem) -> pb2.FormItem:
     label_enum, label_raw = _to_doc_item_label_enum_and_raw(item.label)
     msg = pb2.FormItem(
         self_ref=item.self_ref,
-        content_layer=_enum_value(
-            item.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED
-        ),
+        content_layer=_enum_value(item.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED),
         label=label_enum,
     )
     if label_raw is not None:
@@ -1424,12 +1491,8 @@ def _to_form_item(item: FormItem) -> pb2.FormItem:
 def _to_field_region_item(item: FieldRegionItem) -> pb2.FieldRegionItem:
     msg = pb2.FieldRegionItem(
         self_ref=item.self_ref,
-        content_layer=_enum_value(
-            item.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED
-        ),
-        label=_enum_value(
-            item.label, _DOC_ITEM_LABEL_MAP, pb2.DOC_ITEM_LABEL_UNSPECIFIED
-        ),
+        content_layer=_enum_value(item.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED),
+        label=_enum_value(item.label, _DOC_ITEM_LABEL_MAP, pb2.DOC_ITEM_LABEL_UNSPECIFIED),
     )
     if item.parent is not None:
         msg.parent.CopyFrom(_to_ref(item.parent))
@@ -1450,12 +1513,8 @@ def _to_field_region_item(item: FieldRegionItem) -> pb2.FieldRegionItem:
 def _to_field_item(item: FieldItem) -> pb2.FieldItem:
     msg = pb2.FieldItem(
         self_ref=item.self_ref,
-        content_layer=_enum_value(
-            item.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED
-        ),
-        label=_enum_value(
-            item.label, _DOC_ITEM_LABEL_MAP, pb2.DOC_ITEM_LABEL_UNSPECIFIED
-        ),
+        content_layer=_enum_value(item.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED),
+        label=_enum_value(item.label, _DOC_ITEM_LABEL_MAP, pb2.DOC_ITEM_LABEL_UNSPECIFIED),
     )
     if item.parent is not None:
         msg.parent.CopyFrom(_to_ref(item.parent))
@@ -1476,9 +1535,7 @@ def _to_field_item(item: FieldItem) -> pb2.FieldItem:
 def _to_group_item(group: GroupItem) -> pb2.GroupItem:
     msg = pb2.GroupItem(
         self_ref=group.self_ref,
-        content_layer=_enum_value(
-            group.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED
-        ),
+        content_layer=_enum_value(group.content_layer, _CONTENT_LAYER_MAP, pb2.CONTENT_LAYER_UNSPECIFIED),
         label=_enum_value(group.label, _GROUP_LABEL_MAP, pb2.GROUP_LABEL_UNSPECIFIED),
         name=group.name,
     )
@@ -1536,17 +1593,15 @@ def docling_document_to_proto(doc: DoclingDocument) -> pb2.DoclingDocument:
     if doc.tables:
         msg.tables.extend([_to_table_item(tbl) for tbl in doc.tables])
     if doc.key_value_items:
-        msg.key_value_items.extend(
-            [_to_key_value_item(item) for item in doc.key_value_items]
-        )
+        msg.key_value_items.extend([_to_key_value_item(item) for item in doc.key_value_items])
     if doc.form_items:
         msg.form_items.extend([_to_form_item(item) for item in doc.form_items])
     if doc.field_regions:
-        msg.field_regions.extend(
-            [_to_field_region_item(item) for item in doc.field_regions]
-        )
+        msg.field_regions.extend([_to_field_region_item(item) for item in doc.field_regions])
     if doc.field_items:
         msg.field_items.extend([_to_field_item(item) for item in doc.field_items])
+    if doc.tracks:
+        msg.tracks.extend([_to_track_item(item) for item in doc.tracks])
     for key, page in doc.pages.items():
         msg.pages[int(key)].CopyFrom(_to_page_item(page))
     return msg
@@ -1581,16 +1636,17 @@ _COORD_ORIGIN_REVERSE = _invert_enum_map(_COORD_ORIGIN_MAP)
 _ORIENTATION_REVERSE = _invert_enum_map(_ORIENTATION_MAP)
 _CODE_LANGUAGE_REVERSE = _invert_enum_map(_CODE_LANGUAGE_MAP)
 _HUMAN_LANGUAGE_REVERSE = _invert_enum_map(_HUMAN_LANGUAGE_MAP)
+_MEDIA_MIMETYPE_REVERSE = {tag: mimetype for mimetype, tag in _MEDIA_MIMETYPE_MAP.items()}
 
 
-def _from_doc_item_label(tag: int) -> Optional[DocItemLabel]:
+def _from_doc_item_label(tag: int) -> DocItemLabel | None:
     if tag == 0:
         return None
     value = _DOC_ITEM_LABEL_REVERSE.get(tag)
     return DocItemLabel(value) if value is not None else None
 
 
-def _from_code_language(tag: int, raw: str) -> Optional[CodeLanguageLabel]:
+def _from_code_language(tag: int, raw: str) -> CodeLanguageLabel | None:
     if tag > 0:
         value = _CODE_LANGUAGE_REVERSE.get(tag)
         if value is not None:
@@ -1616,10 +1672,7 @@ def _from_struct_value(msg: struct_pb2.Value) -> Any:
     if kind == "string_value":
         return msg.string_value
     if kind == "struct_value":
-        return {
-            key: _from_struct_value(value)
-            for key, value in msg.struct_value.fields.items()
-        }
+        return {key: _from_struct_value(value) for key, value in msg.struct_value.fields.items()}
     if kind == "list_value":
         return [_from_struct_value(item) for item in msg.list_value.values]
     raise TypeError(f"Unsupported struct value kind: {kind!r}")
@@ -1628,10 +1681,7 @@ def _from_struct_value(msg: struct_pb2.Value) -> Any:
 def _custom_fields_kwargs(msg: Any) -> dict[str, Any]:
     # Sorted so the Pydantic extras' insertion order (which is the dump
     # order) is deterministic; protobuf map iteration order is not.
-    return {
-        key: _from_struct_value(msg.custom_fields[key])
-        for key in sorted(msg.custom_fields)
-    }
+    return {key: _from_struct_value(msg.custom_fields[key]) for key in sorted(msg.custom_fields)}
 
 
 # The namespaced custom field the typed picture barcode annotations project
@@ -1666,7 +1716,7 @@ def _from_ref(msg: pb2.RefItem) -> RefItem:
     return RefItem(cref=msg.ref)
 
 
-def _opt_ref(msg: Any, field: str) -> Optional[RefItem]:
+def _opt_ref(msg: Any, field: str) -> RefItem | None:
     return _from_ref(getattr(msg, field)) if msg.HasField(field) else None
 
 
@@ -1711,7 +1761,7 @@ def _from_summary_meta(msg: pb2.SummaryMetaField) -> SummaryMetaField:
     return SummaryMetaField(**kwargs, **_custom_fields_kwargs(msg))
 
 
-def _from_language_meta(msg: pb2.LanguageMetaField) -> Optional[LanguageMetaField]:
+def _from_language_meta(msg: pb2.LanguageMetaField) -> LanguageMetaField | None:
     value = _HUMAN_LANGUAGE_REVERSE.get(msg.code) if msg.code > 0 else None
     if value is None:
         # `code` is required and strictly typed; a language whose code cannot
@@ -1740,7 +1790,7 @@ def _from_entity_mention(msg: pb2.EntityMention) -> EntityMention:
     return EntityMention(**kwargs, **_custom_fields_kwargs(msg))
 
 
-def _from_entities_meta(msg: pb2.EntitiesMetaField) -> Optional[EntitiesMetaField]:
+def _from_entities_meta(msg: pb2.EntitiesMetaField) -> EntitiesMetaField | None:
     if not msg.mentions:
         return None
     return EntitiesMetaField(
@@ -1749,13 +1799,13 @@ def _from_entities_meta(msg: pb2.EntitiesMetaField) -> Optional[EntitiesMetaFiel
     )
 
 
-def _from_keywords_meta(msg: pb2.KeywordsMetaField) -> Optional[KeywordsMetaField]:
+def _from_keywords_meta(msg: pb2.KeywordsMetaField) -> KeywordsMetaField | None:
     if not msg.values:
         return None
     return KeywordsMetaField(values=list(msg.values), **_custom_fields_kwargs(msg))
 
 
-def _from_topics_meta(msg: pb2.TopicsMetaField) -> Optional[TopicsMetaField]:
+def _from_topics_meta(msg: pb2.TopicsMetaField) -> TopicsMetaField | None:
     if not msg.values:
         return None
     return TopicsMetaField(values=list(msg.values), **_custom_fields_kwargs(msg))
@@ -1813,9 +1863,7 @@ def _from_picture_classification_meta(
 ) -> PictureClassificationMetaField:
     kwargs: dict[str, Any] = {}
     if msg.predictions:
-        kwargs["predictions"] = [
-            _from_picture_classification_prediction(p) for p in msg.predictions
-        ]
+        kwargs["predictions"] = [_from_picture_classification_prediction(p) for p in msg.predictions]
     return PictureClassificationMetaField(**kwargs, **_custom_fields_kwargs(msg))
 
 
@@ -1860,15 +1908,13 @@ def _from_floating_meta(msg: pb2.FloatingMeta) -> FloatingMeta:
 
 def _from_picture_meta(
     msg: pb2.PictureMeta,
-    barcodes: Optional[list[dict[str, str]]] = None,
+    barcodes: list[dict[str, str]] | None = None,
 ) -> PictureMeta:
     kwargs = _inherited_meta_kwargs(msg)
     if msg.HasField("description"):
         kwargs["description"] = _from_description_meta(msg.description)
     if msg.HasField("classification"):
-        kwargs["classification"] = _from_picture_classification_meta(
-            msg.classification
-        )
+        kwargs["classification"] = _from_picture_classification_meta(msg.classification)
     if msg.HasField("molecule"):
         kwargs["molecule"] = _from_molecule_meta(msg.molecule)
     if msg.HasField("tabular_chart"):
@@ -1924,6 +1970,22 @@ def _from_image_ref(msg: pb2.ImageRef) -> ImageRef:
         size=_from_size(msg.size),
         uri=msg.uri,
     )
+
+
+def _from_media_ref(msg: pb2.MediaRef) -> MediaRef:
+    if msg.mimetype == pb2.MEDIA_MIMETYPE_UNSPECIFIED:
+        raise ValueError("Unsupported media type: unset")
+    mimetype = _MEDIA_MIMETYPE_REVERSE.get(msg.mimetype)
+    if mimetype is None:
+        raise ValueError(f"Unsupported media type: {msg.mimetype!r}")
+    arm = msg.WhichOneof("uri")
+    if arm == "url":
+        uri: AnyUrl | Path = AnyUrl(msg.url)
+    elif arm == "file_path":
+        uri = Path(msg.file_path)
+    else:
+        raise ValueError("MediaRef.uri is unset")
+    return MediaRef(mimetype=mimetype, uri=uri)
 
 
 def _from_provenance_item(msg: pb2.ProvenanceItem) -> ProvenanceItem:
@@ -2170,6 +2232,19 @@ def _from_table_item(msg: pb2.TableItem) -> TableItem:
     return TableItem(**kwargs)
 
 
+def _from_track_item(msg: pb2.TrackItem) -> TrackItem:
+    kwargs = _floating_item_kwargs(msg)
+    if msg.HasField("audio"):
+        audio = _from_media_ref(msg.audio)
+        _require_media_kind(audio, "audio/")
+        kwargs["audio"] = audio
+    if msg.HasField("video"):
+        video = _from_media_ref(msg.video)
+        _require_media_kind(video, "video/")
+        kwargs["video"] = video
+    return TrackItem(**kwargs)
+
+
 def _from_picture_item(msg: pb2.PictureItem) -> PictureItem:
     # See _from_table_item for why proto `annotations` are ignored on import.
     # The typed barcode arm is the single exception: it has no first-class
@@ -2186,9 +2261,7 @@ def _from_picture_item(msg: pb2.PictureItem) -> PictureItem:
 
 def _from_graph_cell(msg: pb2.GraphCell) -> GraphCell:
     kwargs: dict[str, Any] = {
-        "label": GraphCellLabel(
-            _GRAPH_CELL_LABEL_REVERSE.get(msg.label, GraphCellLabel.UNSPECIFIED.value)
-        ),
+        "label": GraphCellLabel(_GRAPH_CELL_LABEL_REVERSE.get(msg.label, GraphCellLabel.UNSPECIFIED.value)),
         "cell_id": msg.cell_id,
         "text": msg.text,
         "orig": msg.orig,
@@ -2202,9 +2275,7 @@ def _from_graph_cell(msg: pb2.GraphCell) -> GraphCell:
 
 def _from_graph_link(msg: pb2.GraphLink) -> GraphLink:
     return GraphLink(
-        label=GraphLinkLabel(
-            _GRAPH_LINK_LABEL_REVERSE.get(msg.label, GraphLinkLabel.UNSPECIFIED.value)
-        ),
+        label=GraphLinkLabel(_GRAPH_LINK_LABEL_REVERSE.get(msg.label, GraphLinkLabel.UNSPECIFIED.value)),
         source_cell_id=msg.source_cell_id,
         target_cell_id=msg.target_cell_id,
     )
@@ -2257,9 +2328,7 @@ def _from_group_item(msg: pb2.GroupItem) -> GroupItem:
         kwargs["meta"] = _from_base_meta(msg.meta)
     if msg.HasField("name"):
         kwargs["name"] = msg.name
-    label = GroupLabel(
-        _GROUP_LABEL_REVERSE.get(msg.label, GroupLabel.UNSPECIFIED.value)
-    )
+    label = GroupLabel(_GROUP_LABEL_REVERSE.get(msg.label, GroupLabel.UNSPECIFIED.value))
     # Mirror the class the JSON loading path would pick for this label.
     #
     # `DoclingDocument.groups` is typed `list[Union[ListGroup, InlineGroup,
@@ -2314,17 +2383,12 @@ def proto_to_docling_document(msg: pb2.DoclingDocument) -> DoclingDocument:
         "texts": [_from_base_text_item(text) for text in msg.texts],
         "pictures": [_from_picture_item(pic) for pic in msg.pictures],
         "tables": [_from_table_item(tbl) for tbl in msg.tables],
-        "key_value_items": [
-            _from_key_value_item(item) for item in msg.key_value_items
-        ],
+        "key_value_items": [_from_key_value_item(item) for item in msg.key_value_items],
         "form_items": [_from_form_item(item) for item in msg.form_items],
-        "field_regions": [
-            _from_field_region_item(item) for item in msg.field_regions
-        ],
+        "field_regions": [_from_field_region_item(item) for item in msg.field_regions],
         "field_items": [_from_field_item(item) for item in msg.field_items],
-        "pages": {
-            int(key): _from_page_item(page) for key, page in msg.pages.items()
-        },
+        "tracks": [_from_track_item(item) for item in msg.tracks],
+        "pages": {int(key): _from_page_item(page) for key, page in msg.pages.items()},
     }
     if msg.HasField("schema_name"):
         kwargs["schema_name"] = msg.schema_name
